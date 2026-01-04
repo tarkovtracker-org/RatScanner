@@ -57,6 +57,10 @@ public static class MapDataLoader
 				if (map.Projection != "interactive") continue;
 
 				var tMap = TarkovDevAPI.GetMaps().FirstOrDefault(m => m.NormalizedName == mapData.NormalizedName);
+				if (tMap == null) {
+					Logger.LogWarning($"No TarkovDev map match for normalized name: {mapData.NormalizedName}");
+					continue;
+				}
 				cache[tMap.Id] = map;
 			}
 		}
