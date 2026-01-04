@@ -32,18 +32,20 @@ public static class TarkovDevAPI {
 
 	private static readonly HttpClient HttpClient = CreateHttpClient();
 
-	private static HttpClient CreateHttpClient() {
-		HttpClient client = new(new HttpClientHandler {
-			AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-		});
-		// Some upstreams reject requests without a user-agent.
-		try {
-			client.DefaultRequestHeaders.UserAgent.ParseAdd($"RatScanner/{RatConfig.Version}");
-		} catch {
-			client.DefaultRequestHeaders.UserAgent.ParseAdd("RatScanner");
-		}
-		return client;
-	}
+        private static HttpClient CreateHttpClient() {
+                HttpClient client = new(new HttpClientHandler {
+                        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                });
+                client.Timeout = TimeSpan.FromSeconds(30);
+                // Some upstreams reject requests without a user-agent.
+                try {
+                        client.DefaultRequestHeaders.UserAgent.ParseAdd($"RatScanner/{RatConfig.Version}");
+                } catch (Exception e) {
+                        Logger.LogWarning("Failed to set user-agent header; falling back to default RatScanner user-agent.", e);
+                        client.DefaultRequestHeaders.UserAgent.ParseAdd("RatScanner");
+                }
+                return client;
+        }
 
 	private static readonly JsonSerializerSettings JsonSettings = new() {
 		MissingMemberHandling = MissingMemberHandling.Ignore,
@@ -196,14 +198,14 @@ public static class TarkovDevAPI {
 	/// <summary>
 	/// Full cache initialization - waits for all requests to complete
 	/// </summary>
-	public static async Task InitializeCache() {
-		await Task.WhenAll(
-			Task.Run(() => QueueRequest<Item>(ItemsQueryKey(), ItemsQuery, RatConfig.MediumTTL)),
-			Task.Run(() => QueueRequest<TTask>(TasksQueryKey(), TasksQuery, RatConfig.LongTTL)),
-			Task.Run(() => QueueRequest<HideoutStation>(HideoutStationsQueryKey(), HideoutStationsQuery, RatConfig.LongTTL)),
-			Task.Run(() => QueueRequest<Map>(MapsQueryKey(), MapsQuery, RatConfig.LongTTL))
-		).ConfigureAwait(false);
-	}
+        public static async Task InitializeCache() {
+                await Task.WhenAll(
+                        QueueRequest<Item>(ItemsQueryKey(), ItemsQuery, RatConfig.MediumTTL),
+                        QueueRequest<TTask>(TasksQueryKey(), TasksQuery, RatConfig.LongTTL),
+                        QueueRequest<HideoutStation>(HideoutStationsQueryKey(), HideoutStationsQuery, RatConfig.LongTTL),
+                        QueueRequest<Map>(MapsQueryKey(), MapsQuery, RatConfig.LongTTL)
+                ).ConfigureAwait(false);
+        }
 
 	public static Item[] GetItems(LanguageCode language, GameMode gameMode) => GetCached<Item>(ItemsQueryKey(language, gameMode), () => ItemsQuery(language, gameMode), RatConfig.MediumTTL);
 	public static Item[] GetItems() => GetCached<Item>(ItemsQueryKey(), ItemsQuery, RatConfig.MediumTTL);
