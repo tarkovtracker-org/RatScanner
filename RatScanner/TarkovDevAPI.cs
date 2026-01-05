@@ -203,7 +203,7 @@ public static class TarkovDevAPI {
             Lazy<Task> lazy = InFlightRequests.GetOrAdd(baseQueryKey, newLazy);
             Task task = lazy.Value;
             if (lazy == newLazy) {
-                    _ = task.ContinueWith(_ => InFlightRequests.TryRemove(baseQueryKey, out _), TaskScheduler.Default);
+                    _ = task.ContinueWith(_ => InFlightRequests.TryRemove(baseQueryKey, out Lazy<Task> _), TaskScheduler.Default);
             }
             return task;
     }
