@@ -10,12 +10,14 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Forms;
 using MessageBox = System.Windows.MessageBox;
 using PixelFormat = System.Drawing.Imaging.PixelFormat;
 using Size = System.Drawing.Size;
 using Timer = System.Threading.Timer;
+using TarkovItem = RatScanner.TarkovDev.GraphQL.Item;
 
 namespace RatScanner;
 
@@ -65,18 +67,17 @@ public class RatScannerMain : INotifyPropertyChanged {
 		Logger.LogInfo("Initializing TarkovDev API...");
 		
 		// Try to load from offline cache first for faster startup
-		if (TarkovDevAPI.TryInitializeCacheFromOffline()) {
-			// Cache loaded from offline storage, queue background refresh
-			Logger.LogInfo("Using offline cache for fast startup, refreshing in background...");
-			_ = TarkovDevAPI.InitializeCache();
-		} else {
-			// No offline cache available, wait for network requests
-			Logger.LogWarning("No complete offline cache available, fetching from network...");
-			TarkovDevAPI.InitializeCache().Wait();
-		}
+                if (TarkovDevAPI.TryInitializeCacheFromOffline()) {
+                        // Cache loaded from offline storage, queue background refresh
+                        Logger.LogInfo("Using offline cache for fast startup, refreshing in background...");
+                        _ = TarkovDevAPI.InitializeCache();
+                } else {
+                        // No offline cache available, wait for network requests
+                        Logger.LogWarning("No complete offline cache available, fetching from network...");
+                        _ = TarkovDevAPI.InitializeCache();
+                }
 
-		var items = TarkovDevAPI.GetItems();
-		ItemScans.Enqueue(new DefaultItemScan(items[new Random().Next(items.Length)]));
+                SeedInitialItem();
 
 		Logger.LogInfo("Initializing tarkov tracker database");
 		TarkovTrackerDB = new TarkovTrackerDB();
@@ -117,10 +118,10 @@ public class RatScannerMain : INotifyPropertyChanged {
 		}).Start();
 	}
 
-	private void CheckForUpdates() {
-		string mostRecentVersion = ApiManager.GetResource(ApiManager.ResourceType.ClientVersion);
-		if (RatConfig.Version == mostRecentVersion) return;
-		Logger.LogInfo("A new version is available: " + mostRecentVersion);
+        private void CheckForUpdates() {
+                string mostRecentVersion = ApiManager.GetResource(ApiManager.ResourceType.ClientVersion);
+                if (!IsNewerVersionAvailable(RatConfig.Version, mostRecentVersion)) return;
+                Logger.LogInfo("A new version is available: " + mostRecentVersion);
 
 		string forceVersions = ApiManager.GetResource(ApiManager.ResourceType.ClientForceUpdateVersions);
 		if (forceVersions.Contains($"[{RatConfig.Version}]")) {
@@ -131,11 +132,33 @@ public class RatScannerMain : INotifyPropertyChanged {
 		string message = "Version " + mostRecentVersion + " is available!\n";
 		message += "You are using: " + RatConfig.Version + "\n\n";
 		message += "Do you want to install it now?";
-		MessageBoxResult result = MessageBox.Show(message, "Rat Scanner Updater", MessageBoxButton.YesNo);
-		if (result == MessageBoxResult.Yes) UpdateRatScanner();
-	}
+                MessageBoxResult result = MessageBox.Show(message, "Rat Scanner Updater", MessageBoxButton.YesNo);
+                if (result == MessageBoxResult.Yes) UpdateRatScanner();
+        }
 
-	private void UpdateRatScanner() {
+        private static bool IsNewerVersionAvailable(string currentVersion, string availableVersion) {
+                if (TryParseVersion(currentVersion, out Version current) && TryParseVersion(availableVersion, out Version available)) {
+                        return available > current;
+                }
+
+                // Fallback to simple comparison if parsing fails.
+                return !string.Equals(currentVersion, availableVersion, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryParseVersion(string versionText, out Version version) {
+                version = new Version(0, 0);
+                if (string.IsNullOrWhiteSpace(versionText)) return false;
+
+                string cleaned = versionText.Trim();
+                if (cleaned.StartsWith("v", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(1);
+
+                int cut = cleaned.IndexOfAny(new[] { '-', '+' });
+                if (cut >= 0) cleaned = cleaned.Substring(0, cut);
+
+                return Version.TryParse(cleaned, out version);
+        }
+
+        private void UpdateRatScanner() {
 		if (!File.Exists(RatConfig.Paths.Updater)) {
 			Logger.LogWarning(RatConfig.Paths.Updater + " could not be found!");
 			try {
@@ -155,8 +178,8 @@ public class RatScannerMain : INotifyPropertyChanged {
 		Environment.Exit(0);
 	}
 
-	[MemberNotNull(nameof(RatEyeEngine))]
-	internal void SetupRatEye() {
+        [MemberNotNull(nameof(RatEyeEngine))]
+        internal void SetupRatEye() {
 		Config.LogDebug = RatConfig.LogDebug;
 		Config.Path.LogFile = "RatEyeLog.txt";
 		Config.Path.TesseractLibSearchPath = AppDomain.CurrentDomain.BaseDirectory;
@@ -183,18 +206,64 @@ public class RatScannerMain : INotifyPropertyChanged {
 		};
 	}
 
-	private Database RatStashDatabaseFromTarkovDev() {
-		List<Item> rsItems = new();
-		foreach (TarkovDev.GraphQL.Item i in TarkovDevAPI.GetItems()) {
-			rsItems.Add(new RatStash.Item() {
-				Id = i.Id,
-				Name = i.Name,
-				ShortName = i.ShortName,
+        private Database RatStashDatabaseFromTarkovDev() {
+                List<Item> rsItems = new();
+                if (!TarkovDevAPI.TryGetCachedItems(out TarkovDev.GraphQL.Item[] items) || items.Length == 0) {
+                        Logger.LogWarning("Items cache not ready; initializing RatEye with empty item database.");
+                        return RatStash.Database.FromItems(rsItems);
+                }
+
+                foreach (TarkovDev.GraphQL.Item i in items) {
+                        rsItems.Add(new RatStash.Item() {
+                                Id = i.Id,
+                                Name = i.Name,
+                                ShortName = i.ShortName,
 
 			});
 		}
-		return RatStash.Database.FromItems(rsItems);
-	}
+                return RatStash.Database.FromItems(rsItems);
+        }
+
+        private void SeedInitialItem() {
+                if (TarkovDevAPI.TryGetCachedItems(out TarkovItem[] items) && items.Length > 0) {
+                        ItemScans.Enqueue(new DefaultItemScan(items[new Random().Next(items.Length)]));
+                        return;
+                }
+
+                ItemScans.Enqueue(new DefaultItemScan(CreatePlaceholderItem()));
+                _ = Task.Run(() => WaitForItemsAndSeedAsync(TimeSpan.FromSeconds(30)));
+        }
+
+        private async Task WaitForItemsAndSeedAsync(TimeSpan timeout) {
+                Stopwatch sw = Stopwatch.StartNew();
+                while (sw.Elapsed < timeout) {
+                        if (TarkovDevAPI.TryGetCachedItems(out TarkovItem[] items) && items.Length > 0) {
+                                ItemScans.Enqueue(new DefaultItemScan(items[new Random().Next(items.Length)]));
+                                Logger.LogInfo("Items cache ready; reinitializing RatEye...");
+                                SetupRatEye();
+                                RefreshOverlay();
+                                return;
+                        }
+                        await Task.Delay(500).ConfigureAwait(false);
+                }
+                Logger.LogWarning("Timed out waiting for items cache to populate.");
+        }
+
+        private static TarkovItem CreatePlaceholderItem() {
+                return new TarkovItem {
+                        Id = "loading",
+                        Name = "Loading...",
+                        ShortName = "Loading...",
+                        Avg24HPrice = 0,
+                        Width = 1,
+                        Height = 1,
+                        Updated = DateTime.UtcNow.ToString("O"),
+                        IconLink = "https://assets.tarkov.dev/unknown-item-grid-image.jpg",
+                        BaseImageLink = "https://assets.tarkov.dev/unknown-item-grid-image.jpg",
+                        Link = "https://tarkov.dev/",
+                        WikiLink = "",
+                };
+        }
 
 	/// <summary>
 	/// Perform a name scan at the give position
@@ -321,13 +390,13 @@ public class RatScannerMain : INotifyPropertyChanged {
 	private void RefreshTarkovTrackerDB(object? o = null) {
 		Logger.LogInfo("Refreshing TarkovTracker DB...");
 		TarkovTrackerDB.Init();
-		_tarkovTrackerDBRefreshTimer.Change(RatConfig.Tracking.TarkovTracker.RefreshTime, Timeout.Infinite);
+		_tarkovTrackerDBRefreshTimer?.Change(RatConfig.Tracking.TarkovTracker.RefreshTime, Timeout.Infinite);
 	}
 	private void RefreshOverlay(object? o = null) {
 		OnPropertyChanged();
 	}
 
-	protected virtual void OnPropertyChanged(string propertyName = null) {
+	protected virtual void OnPropertyChanged(string? propertyName = null) {
 		PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 	}
 }

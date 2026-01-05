@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using RatScanner.TarkovDev.GraphQL;
 using System;
 using System.Collections.Concurrent;
@@ -34,7 +34,7 @@ public static class TarkovDevAPI {
 
         private static HttpClient CreateHttpClient() {
                 HttpClient client = new(new HttpClientHandler {
-                        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
                 });
                 client.Timeout = TimeSpan.FromSeconds(30);
                 // Some upstreams reject requests without a user-agent.
@@ -54,13 +54,18 @@ public static class TarkovDevAPI {
 		TypeNameAssemblyFormatHandling = TypeNameAssemblyFormatHandling.Simple,
 	};
 
-	private static async Task<Stream> Get(string query) {
-		Dictionary<string, string> body = new() { { "query", query } };
-		HttpResponseMessage responseTask = await HttpClient.PostAsJsonAsync(ApiEndpoint, body);
+        private static async Task<string> GetResponseString(string query) {
+                Dictionary<string, string> body = new() { { "query", query } };
+                using HttpResponseMessage response = await HttpClient.PostAsJsonAsync(ApiEndpoint, body);
 
-		if (responseTask.StatusCode != HttpStatusCode.OK) throw new Exception($"Tarkov.dev API request failed. {responseTask.ReasonPhrase}");
-		return await responseTask.Content.ReadAsStreamAsync();
-	}
+                string responseBody = await response.Content.ReadAsStringAsync();
+                if (response.StatusCode != HttpStatusCode.OK) {
+                        string trimmed = responseBody;
+                        if (trimmed.Length > 512) trimmed = trimmed.Substring(0, 512) + "...";
+                        throw new Exception($"Tarkov.dev API request failed ({(int)response.StatusCode} {response.ReasonPhrase}). Body: {trimmed}");
+                }
+                return responseBody;
+        }
 
 	/// <summary>
 	/// Tries to load data from offline cache
@@ -89,23 +94,14 @@ public static class TarkovDevAPI {
 	/// <summary>
 	/// Fetches all data in a single request
 	/// </summary>
-	private static async Task QueueRequest<T>(string baseQueryKey, Func<string> queryBuilder, long ttl) where T : class {
-		// Check if request is already pending
-		if (!PendingRequests.TryAdd(baseQueryKey, true)) {
-			Logger.LogInfo($"Request already pending for: \"{baseQueryKey}\", skipping");
-			return;
-		}
-
-		try {
+    private static async Task QueueRequestInternal<T>(string baseQueryKey, Func<string> queryBuilder, long ttl) where T : class {
+            try {
 			Stopwatch sw = Stopwatch.StartNew();
 			string query = queryBuilder();
 			Logger.LogInfo($"Fetching data for: \"{baseQueryKey}\"");
 
-			using Stream stream = await Get(query);
-			using StreamReader streamReader = new(stream);
-
-			// Read raw response for caching
-			string rawResponse = await streamReader.ReadToEndAsync();
+                        // Read raw response for caching
+                        string rawResponse = await GetResponseString(query);
 
 			// Parse the response
 			ResponseData<T[]>? neededResponse = JsonConvert.DeserializeObject<ResponseData<T[]>>(rawResponse, JsonSettings);
@@ -148,29 +144,50 @@ public static class TarkovDevAPI {
 			if (!Cache.ContainsKey(baseQueryKey)) {
 				throw new Exception("Failed to fetch query response and no cache available.");
 			}
-		} finally {
-			// Always remove from pending requests when done
-			PendingRequests.TryRemove(baseQueryKey, out _);
-		}
-	}
+    } finally {
+            // Always remove from pending requests when done        
+            PendingRequests.TryRemove(baseQueryKey, out _);
+    }
+}
 
-	private static T[] GetCached<T>(string baseQueryKey, Func<string> queryBuilder, long ttl, bool isRetry = false) where T : class {
-		if (!Cache.TryGetValue(baseQueryKey, out (long expire, object response) value)) {
-			if (isRetry) throw new Exception("Retrying to fetch query response failed.");
+    private static async Task QueueRequest<T>(string baseQueryKey, Func<string> queryBuilder, long ttl) where T : class {
+            // Check if request is already pending
+            if (!PendingRequests.TryAdd(baseQueryKey, true)) {
+                    return;
+            }
 
-			Logger.LogInfo($"Query not found in cache: \"{baseQueryKey}\"");
-			Task.Run(() => QueueRequest<T>(baseQueryKey, queryBuilder, ttl)).Wait();
-			return GetCached<T>(baseQueryKey, queryBuilder, ttl, true);
-		}
+            await QueueRequestInternal<T>(baseQueryKey, queryBuilder, ttl).ConfigureAwait(false);
+    }
 
-		// Queue request if cache is expired and no request is already pending
-		long time = DateTimeOffset.Now.ToUnixTimeSeconds();
-		if (time > value.expire && !PendingRequests.ContainsKey(baseQueryKey)) {
-			Task.Run(() => QueueRequest<T>(baseQueryKey, queryBuilder, ttl));
-		}
+    private static T[] GetCached<T>(string baseQueryKey, Func<string> queryBuilder, long ttl) where T : class {
+                try {
+                        if (!Cache.TryGetValue(baseQueryKey, out (long expire, object response) value)) {
+                                if (!PendingRequests.TryAdd(baseQueryKey, true)) {
+                                        return Array.Empty<T>();
+                                }
 
-		return (T[])value.response;
-	}
+                                Logger.LogInfo($"Cache miss for: \"{baseQueryKey}\", queuing fetch.");
+                                try {
+                                        _ = Task.Run(() => QueueRequestInternal<T>(baseQueryKey, queryBuilder, ttl));
+                                } catch (Exception e) {
+                                        PendingRequests.TryRemove(baseQueryKey, out _);
+                                        Logger.LogWarning($"Failed to queue request for: \"{baseQueryKey}\", returning empty.", e);
+                                }
+                                return Array.Empty<T>();
+                        }
+
+                        // Queue request if cache is expired and no request is already pending
+                        long time = DateTimeOffset.Now.ToUnixTimeSeconds();
+                        if (time > value.expire && !PendingRequests.ContainsKey(baseQueryKey)) {
+                                Task.Run(() => QueueRequest<T>(baseQueryKey, queryBuilder, ttl));
+                        }
+
+                        return (T[])value.response;
+                } catch (Exception e) {
+                        Logger.LogWarning($"Failed to get cached data for: \"{baseQueryKey}\", returning empty.", e);
+                        return Array.Empty<T>();
+                }
+        }
 
 	/// <summary>
 	/// Initializes cache from offline storage first, then queues background refresh.
@@ -207,8 +224,16 @@ public static class TarkovDevAPI {
                 ).ConfigureAwait(false);
         }
 
-	public static Item[] GetItems(LanguageCode language, GameMode gameMode) => GetCached<Item>(ItemsQueryKey(language, gameMode), () => ItemsQuery(language, gameMode), RatConfig.MediumTTL);
-	public static Item[] GetItems() => GetCached<Item>(ItemsQueryKey(), ItemsQuery, RatConfig.MediumTTL);
+        public static Item[] GetItems(LanguageCode language, GameMode gameMode) => GetCached<Item>(ItemsQueryKey(language, gameMode), () => ItemsQuery(language, gameMode), RatConfig.MediumTTL);
+        public static Item[] GetItems() => GetCached<Item>(ItemsQueryKey(), ItemsQuery, RatConfig.MediumTTL);
+        public static bool TryGetCachedItems(out Item[] items) {
+                if (Cache.TryGetValue(ItemsQueryKey(), out (long expire, object response) cached)) {
+                        items = (Item[])cached.response;
+                        return true;
+                }
+                items = Array.Empty<Item>();
+                return false;
+        }
 
 	public static TTask[] GetTasks(LanguageCode language, GameMode gameMode) => GetCached<TTask>(TasksQueryKey(language, gameMode), () => TasksQuery(language, gameMode), RatConfig.LongTTL);
 	public static TTask[] GetTasks() => GetCached<TTask>(TasksQueryKey(), TasksQuery, RatConfig.LongTTL);
@@ -225,35 +250,48 @@ public static class TarkovDevAPI {
 	private static string ItemsQueryKey(LanguageCode language, GameMode gameMode) => $"items_{language}_{gameMode}";
 
 	private static string ItemsQuery() => ItemsQuery(RatConfig.NameScan.Language.ToTarkovDevType(), RatConfig.GameMode);
-	private static string ItemsQuery(LanguageCode language, GameMode gameMode) {
-		return new QueryQueryBuilder().WithItems(new ItemQueryBuilder().WithAllScalarFields()
-		.WithProperties(new ItemPropertiesQueryBuilder().WithAllScalarFields()
-			.WithItemPropertiesAmmoFragment(new ItemPropertiesAmmoQueryBuilder().WithAllScalarFields())
-			.WithItemPropertiesFoodDrinkFragment(new ItemPropertiesFoodDrinkQueryBuilder().WithAllScalarFields()
-				.WithStimEffects(new StimEffectQueryBuilder().WithAllScalarFields()))
-			.WithItemPropertiesStimFragment(new ItemPropertiesStimQueryBuilder().WithAllScalarFields()
-				.WithStimEffects(new StimEffectQueryBuilder().WithAllScalarFields()))
-			.WithItemPropertiesMedicalItemFragment(new ItemPropertiesMedicalItemQueryBuilder().WithAllScalarFields())
-			.WithItemPropertiesMedKitFragment(new ItemPropertiesMedKitQueryBuilder().WithAllScalarFields()))
-		.WithSellFor(new ItemPriceQueryBuilder().WithAllScalarFields()
-			.WithVendor(new VendorQueryBuilder().WithAllScalarFields()
-				.WithTraderOfferFragment(new TraderOfferQueryBuilder().WithAllScalarFields()
-					.WithTrader(new TraderQueryBuilder().WithAllScalarFields()))))
-		.WithBuyFor(new ItemPriceQueryBuilder().WithAllScalarFields()
-			.WithVendor(new VendorQueryBuilder().WithAllScalarFields()
-				.WithTraderOfferFragment(new TraderOfferQueryBuilder().WithAllScalarFields()
-					.WithTrader(new TraderQueryBuilder().WithAllScalarFields()))))
-		.WithCategory(new ItemCategoryQueryBuilder().WithAllScalarFields())
-		.WithCategories(new ItemCategoryQueryBuilder().WithAllScalarFields())
-		.WithUsedInTasks(new TaskQueryBuilder().WithId())
-		.WithReceivedFromTasks(new TaskQueryBuilder().WithId())
-		.WithBartersFor(new BarterQueryBuilder().WithId())
-		.WithBartersUsing(new BarterQueryBuilder().WithId())
-		.WithCraftsFor(new CraftQueryBuilder().WithId())
-		.WithCraftsUsing(new CraftQueryBuilder().WithId())
-		.WithTypes()
-		, alias: "data", lang: language, gameMode: gameMode).Build();
-	}
+        private static string ItemsQuery(LanguageCode language, GameMode gameMode) {
+                string lang = ToGraphQlEnum(language);
+                string mode = ToGraphQlEnum(gameMode);
+                return $@"query {{
+  data: items(lang: {lang}, gameMode: {mode}) {{
+    id
+    name
+    shortName
+    iconLink
+    baseImageLink
+    link
+    wikiLink
+    avg24hPrice
+    width
+    height
+    updated
+    types
+    properties {{
+      __typename
+      ... on ItemPropertiesAmmo {{
+        caliber
+        damage
+        penetrationPower
+        fragmentationChance
+      }}
+    }}
+    sellFor {{
+      priceRUB
+      vendor {{
+        __typename
+        ... on TraderOffer {{
+          name
+          trader {{
+            name
+            imageLink
+          }}
+        }}
+      }}
+    }}
+  }}
+}}";
+        }
 
 	#endregion
 
@@ -264,56 +302,66 @@ public static class TarkovDevAPI {
 
 	private static string TasksQuery() => TasksQuery(RatConfig.NameScan.Language.ToTarkovDevType(), RatConfig.GameMode);
 	private static string TasksQuery(LanguageCode language, GameMode gameMode) {
-		return new QueryQueryBuilder().WithTasks(new TaskQueryBuilder().WithAllScalarFields()
-			.WithKappaRequired()
-			.WithMap(new MapQueryBuilder().WithAllScalarFields())
-			.WithTrader(new TraderQueryBuilder().WithAllScalarFields())
-			.WithObjectives(new TaskObjectiveQueryBuilder().WithAllScalarFields()
-				.WithTaskObjectiveBasicFragment(new TaskObjectiveBasicQueryBuilder().WithAllScalarFields()
-					.WithZones(new TaskZoneQueryBuilder().WithMap(new MapQueryBuilder().WithId()).WithPosition(new MapPositionQueryBuilder().WithAllScalarFields())))
-
-				.WithTaskObjectiveBuildItemFragment(new TaskObjectiveBuildItemQueryBuilder().WithAllScalarFields()
-					.WithItem(new ItemQueryBuilder().WithAllScalarFields()))
-
-				.WithTaskObjectiveExperienceFragment(new TaskObjectiveExperienceQueryBuilder().WithAllScalarFields())
-
-				.WithTaskObjectiveExtractFragment(new TaskObjectiveExtractQueryBuilder().WithAllScalarFields())
-
-				.WithTaskObjectiveItemFragment(new TaskObjectiveItemQueryBuilder().WithAllScalarFields()
-					.WithZones(new TaskZoneQueryBuilder().WithMap(new MapQueryBuilder().WithId()).WithPosition(new MapPositionQueryBuilder().WithAllScalarFields()))
-					.WithItems(new ItemQueryBuilder().WithAllScalarFields()))
-
-				.WithTaskObjectiveMarkFragment(new TaskObjectiveMarkQueryBuilder().WithAllScalarFields()
-					.WithZones(new TaskZoneQueryBuilder().WithMap(new MapQueryBuilder().WithId()).WithPosition(new MapPositionQueryBuilder().WithAllScalarFields()))
-					.WithMarkerItem(new ItemQueryBuilder().WithAllScalarFields()))
-
-				.WithTaskObjectivePlayerLevelFragment(new TaskObjectivePlayerLevelQueryBuilder().WithAllScalarFields())
-
-				.WithTaskObjectiveQuestItemFragment(new TaskObjectiveQuestItemQueryBuilder().WithAllScalarFields()
-					.WithZones(new TaskZoneQueryBuilder().WithMap(new MapQueryBuilder().WithId()).WithPosition(new MapPositionQueryBuilder().WithAllScalarFields()))
-					.WithQuestItem(new QuestItemQueryBuilder().WithAllScalarFields()))
-
-				.WithTaskObjectiveShootFragment(new TaskObjectiveShootQueryBuilder().WithAllScalarFields())
-
-				.WithTaskObjectiveSkillFragment(new TaskObjectiveSkillQueryBuilder().WithAllScalarFields())
-
-				.WithTaskObjectiveTaskStatusFragment(new TaskObjectiveTaskStatusQueryBuilder().WithAllScalarFields())
-
-				.WithTaskObjectiveTraderLevelFragment(new TaskObjectiveTraderLevelQueryBuilder().WithAllScalarFields()
-					.WithTrader(new TraderQueryBuilder().WithAllScalarFields()))
-
-				.WithTaskObjectiveTraderStandingFragment(new TaskObjectiveTraderStandingQueryBuilder().WithAllScalarFields()
-					.WithTrader(new TraderQueryBuilder().WithAllScalarFields()))
-
-				.WithTaskObjectiveUseItemFragment(new TaskObjectiveUseItemQueryBuilder().WithAllScalarFields()
-					.WithZones(new TaskZoneQueryBuilder().WithMap(new MapQueryBuilder().WithId()).WithPosition(new MapPositionQueryBuilder().WithAllScalarFields()))
-					.WithUseAny(new ItemQueryBuilder().WithAllScalarFields())))
-			.WithTaskRequirements(new TaskStatusRequirementQueryBuilder().WithAllScalarFields()
-				.WithTask(new TaskQueryBuilder().WithAllScalarFields()))
-		, alias: "data", lang: language, gameMode: gameMode).Build();
-	}
-
-	#endregion
+                string lang = ToGraphQlEnum(language);
+                string mode = ToGraphQlEnum(gameMode);
+                return $@"query {{
+  data: tasks(lang: {lang}, gameMode: {mode}) {{
+    id
+    name
+    taskImageLink
+    wikiLink
+    kappaRequired
+    trader {{
+      name
+      imageLink
+    }}
+    objectives {{
+      __typename
+      id
+      type
+      description
+      ... on TaskObjectiveItem {{
+        count
+        foundInRaid
+        items {{ id }}
+        zones {{
+          map {{ id }}
+          position {{ x y z }}
+        }}
+      }}
+      ... on TaskObjectiveMark {{
+        markerItem {{ id }}
+        zones {{
+          map {{ id }}
+          position {{ x y z }}
+        }}
+      }}
+      ... on TaskObjectiveBuildItem {{
+        item {{ id }}
+      }}
+      ... on TaskObjectiveBasic {{
+        zones {{
+          map {{ id }}
+          position {{ x y z }}
+        }}
+      }}
+      ... on TaskObjectiveQuestItem {{
+        zones {{
+          map {{ id }}
+          position {{ x y z }}
+        }}
+      }}
+      ... on TaskObjectiveUseItem {{
+        zones {{
+          map {{ id }}
+          position {{ x y z }}
+        }}
+      }}
+    }}
+  }}
+}}";
+        }
+        #endregion
 
 	#region HideoutStations Query
 
@@ -322,21 +370,22 @@ public static class TarkovDevAPI {
 
 	private static string HideoutStationsQuery() => HideoutStationsQuery(RatConfig.NameScan.Language.ToTarkovDevType(), RatConfig.GameMode);
 	private static string HideoutStationsQuery(LanguageCode language, GameMode gameMode) {
-		return new QueryQueryBuilder().WithHideoutStations(new HideoutStationQueryBuilder().WithAllScalarFields()
-			.WithLevels(new HideoutStationLevelQueryBuilder().WithAllScalarFields()
-				.WithItemRequirements(new RequirementItemQueryBuilder().WithAllScalarFields()
-					.WithItem(new ItemQueryBuilder().WithAllScalarFields()))
-				.WithStationLevelRequirements(new RequirementHideoutStationLevelQueryBuilder().WithAllScalarFields()
-					.WithStation(new HideoutStationQueryBuilder().WithAllScalarFields()))
-				.WithCrafts(new CraftQueryBuilder().WithAllScalarFields()
-					.WithRequiredItems(new ContainedItemQueryBuilder().WithAllScalarFields()
-						.WithItem(new ItemQueryBuilder().WithAllScalarFields()))
-					.WithRewardItems(new ContainedItemQueryBuilder().WithAllScalarFields()
-						.WithItem(new ItemQueryBuilder().WithAllScalarFields()))))
-		, alias: "data", lang: language, gameMode: gameMode).Build();
-	}
-
-	#endregion
+                string lang = ToGraphQlEnum(language);
+                string mode = ToGraphQlEnum(gameMode);
+                return $@"query {{
+  data: hideoutStations(lang: {lang}, gameMode: {mode}) {{
+    levels {{
+      id
+      itemRequirements {{
+        id
+        count
+        item {{ id }}
+      }}
+    }}
+  }}
+}}";
+        }
+        #endregion
 
 	#region Maps Query
 
@@ -345,16 +394,22 @@ public static class TarkovDevAPI {
 
 	private static string MapsQuery() => MapsQuery(RatConfig.NameScan.Language.ToTarkovDevType(), RatConfig.GameMode);
 	private static string MapsQuery(LanguageCode language, GameMode gameMode)
-	{
-		return new QueryQueryBuilder().WithMaps(new MapQueryBuilder().WithAllScalarFields()
-			.WithExtracts(new MapExtractQueryBuilder().WithAllScalarFields()
-				.WithPosition(new MapPositionQueryBuilder().WithAllScalarFields())
-				.WithTransferItem(new ContainedItemQueryBuilder().WithAllScalarFields()
-					.WithItem(new ItemQueryBuilder().WithId())))
-			.WithTransits(new MapTransitQueryBuilder().WithAllScalarFields()
-				.WithPosition(new MapPositionQueryBuilder().WithAllScalarFields()))
-		, alias: "data", lang: language, gameMode: gameMode).Build();
-	}
+        {
+                string lang = ToGraphQlEnum(language);
+                string mode = ToGraphQlEnum(gameMode);
+                return $@"query {{
+  data: maps(lang: {lang}, gameMode: {mode}) {{
+    id
+    name
+    normalizedName
+  }}
+}}";
+        }
+        #endregion
 
-	#endregion
+        private static string ToGraphQlEnum(Enum value) => value.ToString().ToLowerInvariant();
 }
+
+
+
+
