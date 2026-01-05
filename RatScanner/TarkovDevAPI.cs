@@ -25,10 +25,19 @@ public static class TarkovDevAPI {
 		public T? Data { get; set; }
 	}
 
+	private sealed class RateLimitedException : Exception {
+		public TimeSpan? RetryAfter { get; }
+
+		public RateLimitedException(TimeSpan? retryAfter, string message) : base(message) {
+			RetryAfter = retryAfter;
+		}
+	}
+
 	const string ApiEndpoint = "https://api.tarkov.dev/graphql";
 
 	private static readonly ConcurrentDictionary<string, (long expire, object response)> Cache = new();
-	private static readonly ConcurrentDictionary<string, bool> PendingRequests = new();
+	private static readonly ConcurrentDictionary<string, Lazy<Task>> InFlightRequests = new();
+	private static readonly ConcurrentDictionary<string, long> BackoffUntil = new();
 
 	private static readonly HttpClient HttpClient = CreateHttpClient();
 
@@ -56,15 +65,31 @@ public static class TarkovDevAPI {
 
         private static async Task<string> GetResponseString(string query) {
                 Dictionary<string, string> body = new() { { "query", query } };
-                using HttpResponseMessage response = await HttpClient.PostAsJsonAsync(ApiEndpoint, body);
+                using HttpResponseMessage response = await HttpClient.PostAsJsonAsync(ApiEndpoint, body).ConfigureAwait(false);
 
-                string responseBody = await response.Content.ReadAsStringAsync();
+                string responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.TooManyRequests) {
+                        string trimmed = responseBody;
+                        if (trimmed.Length > 512) trimmed = trimmed.Substring(0, 512) + "...";
+                        throw new RateLimitedException(GetRetryAfter(response), $"Tarkov.dev API rate limited (429). Body: {trimmed}");
+                }
                 if (response.StatusCode != HttpStatusCode.OK) {
                         string trimmed = responseBody;
                         if (trimmed.Length > 512) trimmed = trimmed.Substring(0, 512) + "...";
                         throw new Exception($"Tarkov.dev API request failed ({(int)response.StatusCode} {response.ReasonPhrase}). Body: {trimmed}");
                 }
                 return responseBody;
+        }
+
+        private static TimeSpan? GetRetryAfter(HttpResponseMessage response) {
+                if (response.Headers.RetryAfter?.Delta != null) {
+                        return response.Headers.RetryAfter.Delta;
+                }
+                if (response.Headers.RetryAfter?.Date != null) {
+                        TimeSpan delta = response.Headers.RetryAfter.Date.Value - DateTimeOffset.UtcNow;
+                        return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+                }
+                return null;
         }
 
 	/// <summary>
@@ -74,13 +99,19 @@ public static class TarkovDevAPI {
 	private static bool TryLoadFromOfflineCache<T>(string baseQueryKey, long ttl) where T : class {
 		if (Cache.ContainsKey(baseQueryKey)) return true;
 
-		if (RatConfig.ReadFromCache(baseQueryKey, out string cachedResponse)) {
+		if (RatConfig.ReadFromCache(baseQueryKey, out string cachedResponse, out DateTimeOffset lastWriteUtc)) {
 			try {
 				ResponseData<T[]>? neededResponse = JsonConvert.DeserializeObject<ResponseData<T[]>?>(cachedResponse, JsonSettings);
 				if (neededResponse?.Data?.Data != null) {
 					long time = DateTimeOffset.Now.ToUnixTimeSeconds();
-					// Use expired TTL so background refresh will be triggered
-					Cache[baseQueryKey] = (time - 1, neededResponse.Data.Data);
+					long expire = time - 1;
+					if (ttl > 0 && lastWriteUtc != DateTimeOffset.MinValue) {
+						long ageSeconds = Math.Max(0, (long)(DateTimeOffset.UtcNow - lastWriteUtc).TotalSeconds);
+						if (ageSeconds < ttl) {
+							expire = time + (ttl - ageSeconds);
+						}
+					}
+					Cache[baseQueryKey] = (expire, neededResponse.Data.Data);
 					Logger.LogInfo($"Loaded {neededResponse.Data.Data.Length} items from offline cache for: \"{baseQueryKey}\"");
 					return true;
 				}
@@ -101,7 +132,7 @@ public static class TarkovDevAPI {
 			Logger.LogInfo($"Fetching data for: \"{baseQueryKey}\"");
 
                         // Read raw response for caching
-                        string rawResponse = await GetResponseString(query);
+                        string rawResponse = await GetResponseString(query).ConfigureAwait(false);
 
 			// Parse the response
 			ResponseData<T[]>? neededResponse = JsonConvert.DeserializeObject<ResponseData<T[]>>(rawResponse, JsonSettings);
@@ -112,6 +143,7 @@ public static class TarkovDevAPI {
 			// Store results in cache
 			long time = DateTimeOffset.Now.ToUnixTimeSeconds();
 			Cache[baseQueryKey] = (time + ttl, results);
+			BackoffUntil.TryRemove(baseQueryKey, out _);
 
 			// Cache raw response for offline use
 			RatConfig.WriteToCache(baseQueryKey, rawResponse);
@@ -120,11 +152,19 @@ public static class TarkovDevAPI {
 		} catch (Exception e) {
 			Logger.LogWarning($"Failed request for: \"{baseQueryKey}\".", e);
 
+			if (e is RateLimitedException rateLimited) {
+				ApplyBackoff(baseQueryKey, rateLimited.RetryAfter);
+			}
+
 			// If we have existing cached data, extend its TTL to prevent rapid retries
 			if (Cache.TryGetValue(baseQueryKey, out var existingCache))
 			{
 				long time = DateTimeOffset.Now.ToUnixTimeSeconds();
-				Cache[baseQueryKey] = (time + RatConfig.SuperShortTTL, existingCache.response);
+				long expire = time + RatConfig.SuperShortTTL;
+				if (BackoffUntil.TryGetValue(baseQueryKey, out long until)) {
+					expire = Math.Max(expire, until);
+				}
+				Cache[baseQueryKey] = (expire, existingCache.response);
 				Logger.LogInfo($"Extended cache TTL for: \"{baseQueryKey}\" to prevent rapid retries");
 				return;
 			}
@@ -136,7 +176,11 @@ public static class TarkovDevAPI {
 				ResponseData<T[]>? neededResponse = JsonConvert.DeserializeObject<ResponseData<T[]>?>(cachedResponse, JsonSettings);
 				if (neededResponse?.Data?.Data != null) {
 					long time = DateTimeOffset.Now.ToUnixTimeSeconds();
-					Cache[baseQueryKey] = (time + RatConfig.SuperShortTTL, neededResponse.Data.Data);
+					long expire = time + RatConfig.SuperShortTTL;
+					if (BackoffUntil.TryGetValue(baseQueryKey, out long until)) {
+						expire = Math.Max(expire, until);
+					}
+					Cache[baseQueryKey] = (expire, neededResponse.Data.Data);
 					return;
 				}
 			}
@@ -144,33 +188,40 @@ public static class TarkovDevAPI {
 			if (!Cache.ContainsKey(baseQueryKey)) {
 				throw new Exception("Failed to fetch query response and no cache available.");
 			}
-    } finally {
-            // Always remove from pending requests when done        
-            PendingRequests.TryRemove(baseQueryKey, out _);
     }
 }
 
-    private static async Task QueueRequest<T>(string baseQueryKey, Func<string> queryBuilder, long ttl) where T : class {
-            // Check if request is already pending
-            if (!PendingRequests.TryAdd(baseQueryKey, true)) {
-                    return;
+    private static Task QueueRequest<T>(string baseQueryKey, Func<string> queryBuilder, long ttl) where T : class {
+            if (InFlightRequests.TryGetValue(baseQueryKey, out Lazy<Task> existingLazy)) {
+                    return existingLazy.Value;
+            }
+            if (IsInBackoff(baseQueryKey)) {
+                    return Task.CompletedTask;
             }
 
-            await QueueRequestInternal<T>(baseQueryKey, queryBuilder, ttl).ConfigureAwait(false);
+            Lazy<Task> newLazy = new(() => QueueRequestInternal<T>(baseQueryKey, queryBuilder, ttl));
+            Lazy<Task> lazy = InFlightRequests.GetOrAdd(baseQueryKey, newLazy);
+            Task task = lazy.Value;
+            if (lazy == newLazy) {
+                    _ = task.ContinueWith(_ => InFlightRequests.TryRemove(baseQueryKey, out _), TaskScheduler.Default);
+            }
+            return task;
     }
 
     private static T[] GetCached<T>(string baseQueryKey, Func<string> queryBuilder, long ttl) where T : class {
                 try {
                         if (!Cache.TryGetValue(baseQueryKey, out (long expire, object response) value)) {
-                                if (!PendingRequests.TryAdd(baseQueryKey, true)) {
+                                if (IsInBackoff(baseQueryKey)) {
+                                        return Array.Empty<T>();
+                                }
+                                if (InFlightRequests.ContainsKey(baseQueryKey)) {
                                         return Array.Empty<T>();
                                 }
 
                                 Logger.LogInfo($"Cache miss for: \"{baseQueryKey}\", queuing fetch.");
                                 try {
-                                        _ = Task.Run(() => QueueRequestInternal<T>(baseQueryKey, queryBuilder, ttl));
+                                        _ = QueueRequest<T>(baseQueryKey, queryBuilder, ttl);
                                 } catch (Exception e) {
-                                        PendingRequests.TryRemove(baseQueryKey, out _);
                                         Logger.LogWarning($"Failed to queue request for: \"{baseQueryKey}\", returning empty.", e);
                                 }
                                 return Array.Empty<T>();
@@ -178,8 +229,8 @@ public static class TarkovDevAPI {
 
                         // Queue request if cache is expired and no request is already pending
                         long time = DateTimeOffset.Now.ToUnixTimeSeconds();
-                        if (time > value.expire && !PendingRequests.ContainsKey(baseQueryKey)) {
-                                Task.Run(() => QueueRequest<T>(baseQueryKey, queryBuilder, ttl));
+                        if (time > value.expire && !IsInBackoff(baseQueryKey) && !InFlightRequests.ContainsKey(baseQueryKey)) {
+                                _ = QueueRequest<T>(baseQueryKey, queryBuilder, ttl);
                         }
 
                         return (T[])value.response;
@@ -187,6 +238,30 @@ public static class TarkovDevAPI {
                         Logger.LogWarning($"Failed to get cached data for: \"{baseQueryKey}\", returning empty.", e);
                         return Array.Empty<T>();
                 }
+        }
+
+        private static bool IsInBackoff(string baseQueryKey) {
+                long time = DateTimeOffset.Now.ToUnixTimeSeconds();
+                if (BackoffUntil.TryGetValue(baseQueryKey, out long until)) {
+                        if (until > time) {
+                                return true;
+                        }
+                        BackoffUntil.TryRemove(baseQueryKey, out _);
+                }
+                return false;
+        }
+
+        private static void ApplyBackoff(string baseQueryKey, TimeSpan? retryAfter) {
+                double delaySeconds = retryAfter?.TotalSeconds ?? RatConfig.SuperShortTTL;
+                long backoffSeconds = (long)Math.Ceiling(Math.Max(delaySeconds, RatConfig.SuperShortTTL));
+                long time = DateTimeOffset.Now.ToUnixTimeSeconds();
+                long until = time + backoffSeconds;
+                BackoffUntil[baseQueryKey] = until;
+
+                if (Cache.TryGetValue(baseQueryKey, out var existingCache)) {
+                        Cache[baseQueryKey] = (Math.Max(existingCache.expire, until), existingCache.response);
+                }
+                Logger.LogInfo($"Rate limited for: \"{baseQueryKey}\". Backing off for {backoffSeconds}s.");
         }
 
 	/// <summary>
@@ -210,6 +285,21 @@ public static class TarkovDevAPI {
 		}
 
 		return allLoaded;
+	}
+
+	internal static bool AnyCacheExpired() {
+		long time = DateTimeOffset.Now.ToUnixTimeSeconds();
+		return IsCacheExpired(ItemsQueryKey(), time)
+			|| IsCacheExpired(TasksQueryKey(), time)
+			|| IsCacheExpired(HideoutStationsQueryKey(), time)
+			|| IsCacheExpired(MapsQueryKey(), time);
+	}
+
+	private static bool IsCacheExpired(string baseQueryKey, long time) {
+		if (!Cache.TryGetValue(baseQueryKey, out (long expire, object response) cached)) {
+			return true;
+		}
+		return time > cached.expire;
 	}
 
 	/// <summary>
@@ -409,7 +499,3 @@ public static class TarkovDevAPI {
 
         private static string ToGraphQlEnum(Enum value) => value.ToString().ToLowerInvariant();
 }
-
-
-
-

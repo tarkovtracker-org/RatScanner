@@ -68,9 +68,12 @@ public class RatScannerMain : INotifyPropertyChanged {
 		
 		// Try to load from offline cache first for faster startup
                 if (TarkovDevAPI.TryInitializeCacheFromOffline()) {
-                        // Cache loaded from offline storage, queue background refresh
-                        Logger.LogInfo("Using offline cache for fast startup, refreshing in background...");
-                        _ = TarkovDevAPI.InitializeCache();
+                        if (TarkovDevAPI.AnyCacheExpired()) {
+                                Logger.LogInfo("Offline cache loaded but stale, refreshing in background...");
+                                _ = TarkovDevAPI.InitializeCache();
+                        } else {
+                                Logger.LogInfo("Offline cache loaded and fresh, skipping background refresh.");
+                        }
                 } else {
                         // No offline cache available, wait for network requests
                         Logger.LogWarning("No complete offline cache available, fetching from network...");
