@@ -73,7 +73,7 @@ The current high-signal smoke covers:
 
 - WPF process startup and WebView2 readiness without a fixed startup sleep;
 - main scan shell, semantic navigation, and the search control;
-- keyboard activation/focus through Settings and a click-driven About route;
+- keyboard activation/focus through Settings and a click-driven About route, including the About card's two-step vertical rhythm (text vs block spacing) and a `desktop-about.png` capture;
 - desktop and 600px narrow settings rendering, responsive control swap, bounds, and horizontal overflow;
 - result-card item art containment (portrait, landscape, square icons) and the Details user-action contract;
 - an ARIA snapshot of the important narrow settings structure;
