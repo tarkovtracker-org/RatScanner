@@ -167,6 +167,135 @@ public sealed class TrackerComponentLifecycleTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Dismissal_before_persistence_continuation_does_not_activate_or_publish_success(
+        bool useDialog,
+        bool activeMode
+    )
+    {
+        Dispatcher dispatcher = Dispatcher.CreateDefault();
+        GameMode mode =
+            activeMode ? RatConfig.GameMode
+            : RatConfig.GameMode == GameMode.Regular ? GameMode.Pve
+            : GameMode.Regular;
+        string originalToken = RatConfig.Tracking.TarkovTracker.TokenForMode(mode);
+        using IDisposable component = useDialog ? new ChangeConnectionDialog() : new SettingsTracking();
+        DismissalContext context = null;
+        PendingTrackerService tracker = new();
+        tracker.ActivationCompletion.SetResult();
+        TaskCompletionSource persistenceStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource persistenceCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using SettingsPersistenceService persistence = new(async _ =>
+        {
+            persistenceStarted.TrySetResult();
+            await persistenceCompletion.Task.ConfigureAwait(false);
+            context.Arm();
+        });
+        using SettingsVM settings = new(
+            new LocalizationService(),
+            persistence,
+            new FakeScanOrchestrator(),
+            tracker,
+            new NoopHotkeyRegistrar()
+        );
+        IMudDialogInstance dialog = DispatchProxy.Create<IMudDialogInstance, DialogRecorder>();
+        SetProperty(component, "TrackerService", tracker);
+        SetProperty(component, "SettingsVM", settings);
+        if (useDialog)
+        {
+            component.GetType().GetProperty("Mode").SetValue(component, mode);
+            SetProperty(component, "DialogInstance", dialog);
+            SetField(component, "_tokenDraft", "test-candidate");
+        }
+        else
+        {
+            GetField<Dictionary<GameMode, string>>(component, "_draft")[mode] = "test-candidate";
+        }
+
+        try
+        {
+            Task submission = dispatcher.InvokeAsync(() =>
+            {
+                SynchronizationContext originalContext = SynchronizationContext.Current;
+                context = new DismissalContext(originalContext, component);
+                SynchronizationContext.SetSynchronizationContext(context);
+                try
+                {
+                    return useDialog
+                        ? InvokeAsync(component, "SubmitAsync")
+                        : InvokeAsync(component, "ConnectAsync", mode);
+                }
+                finally
+                {
+                    SynchronizationContext.SetSynchronizationContext(originalContext);
+                }
+            });
+            tracker.Validations[mode].Completion.SetResult(TrackerValidationResult.Success);
+            await persistenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            // Queue behind validation's continuation so persistence cannot complete
+            // synchronously before the component has registered its await.
+            await dispatcher.InvokeAsync(() => persistenceCompletion.SetResult());
+            await submission.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, context.DismissalCount);
+            Assert.True(tracker.Validations[mode].Token.IsCancellationRequested);
+            Assert.Equal(0, tracker.ActivationCount);
+            Assert.Equal(0, ((DialogRecorder)dialog).CloseCount);
+            Assert.Equal(0, tracker.StateReadCount);
+            if (!useDialog)
+            {
+                Assert.Equal("test-candidate", GetField<Dictionary<GameMode, string>>(component, "_draft")[mode]);
+                Assert.Equal(
+                    TrackerConnectionState.Testing,
+                    GetField<Dictionary<GameMode, TrackerConnectionState>>(component, "_state")[mode]
+                );
+            }
+        }
+        finally
+        {
+            persistenceCompletion.TrySetResult();
+            RatConfig.Tracking.TarkovTracker.SetTokenForMode(mode, originalToken);
+        }
+    }
+
+    // Deliver dismissal on the real dispatcher immediately before the continuation
+    // queued by successful persistence. This covers the gap after the coordinator's
+    // off-dispatcher cancellation check without sleeps or a live credential store.
+    private sealed class DismissalContext(SynchronizationContext inner, IDisposable component) : SynchronizationContext
+    {
+        private int _armed;
+        internal int DismissalCount { get; private set; }
+
+        internal void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        public override void Post(SendOrPostCallback callback, object state) =>
+            inner.Post(
+                value =>
+                {
+                    if (Interlocked.Exchange(ref _armed, 0) == 1)
+                    {
+                        component.Dispose();
+                        DismissalCount++;
+                    }
+                    SynchronizationContext previous = Current;
+                    SetSynchronizationContext(this);
+                    try
+                    {
+                        callback(value);
+                    }
+                    finally
+                    {
+                        SetSynchronizationContext(previous);
+                    }
+                },
+                state
+            );
+    }
+
     private sealed class NoopHotkeyRegistrar : IHotkeyRegistrar
     {
         public void RegisterHotkeys() => throw new InvalidOperationException("No hotkeys should be registered.");

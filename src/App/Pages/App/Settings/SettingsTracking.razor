@@ -228,6 +228,7 @@
                 () => SettingsVM.SetTarkovTrackerOrgTokenAsync(mode, previousToken),
                 cancellation.Token
             );
+            cancellation.Token.ThrowIfCancellationRequested();
             if (!saved.Succeeded)
             {
                 _error[mode] = Localizer["CredentialSaveFailed"];
