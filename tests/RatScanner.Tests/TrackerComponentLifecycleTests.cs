@@ -189,11 +189,15 @@ public sealed class TrackerComponentLifecycleTests
         tracker.ActivationCompletion.SetResult();
         TaskCompletionSource persistenceStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource persistenceCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        int persistCalls = 0;
         using SettingsPersistenceService persistence = new(async _ =>
         {
             persistenceStarted.TrySetResult();
             await persistenceCompletion.Task.ConfigureAwait(false);
-            context.Arm();
+            // Only the candidate save arms dismissal; the rollback save must not
+            // re-trigger it or the assertions below would count a second disposal.
+            if (Interlocked.Increment(ref persistCalls) == 1)
+                context.Arm();
         });
         using SettingsVM settings = new(
             new LocalizationService(),
@@ -246,6 +250,10 @@ public sealed class TrackerComponentLifecycleTests
             Assert.Equal(0, tracker.ActivationCount);
             Assert.Equal(0, ((DialogRecorder)dialog).CloseCount);
             Assert.Equal(0, tracker.StateReadCount);
+            // The candidate was committed before dismissal was observed, so the
+            // component must have rolled the stored credential back itself.
+            Assert.Equal(2, persistCalls);
+            Assert.Equal(originalToken, RatConfig.Tracking.TarkovTracker.TokenForMode(mode));
             if (!useDialog)
             {
                 Assert.Equal("test-candidate", GetField<Dictionary<GameMode, string>>(component, "_draft")[mode]);

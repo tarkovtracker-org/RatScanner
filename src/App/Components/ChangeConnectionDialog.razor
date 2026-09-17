@@ -108,17 +108,22 @@
             }
 
             string previousToken = RatConfig.Tracking.TarkovTracker.TokenForMode(Mode);
+            Task<SettingSaveResult> RestorePrevious() => SettingsVM.SetTarkovTrackerOrgTokenAsync(Mode, previousToken);
             SettingSaveResult saved = await CredentialPersistenceCoordinator.PersistCandidateAsync(
                 () => SettingsVM.SetTarkovTrackerOrgTokenAsync(Mode, candidate),
-                () => SettingsVM.SetTarkovTrackerOrgTokenAsync(Mode, previousToken),
+                RestorePrevious,
                 cancellation.Token
             );
-            cancellation.Token.ThrowIfCancellationRequested();
             if (!saved.Succeeded)
             {
+                cancellation.Token.ThrowIfCancellationRequested();
                 _error = Localizer["CredentialSaveFailed"];
                 return;
             }
+
+            // Dismissal may land while this continuation is queued, after the
+            // coordinator's own check; the committed candidate must still roll back.
+            await CredentialPersistenceCoordinator.RestoreIfCanceledAsync(RestorePrevious, cancellation.Token);
 
             if (RatConfig.GameMode == Mode)
                 await TrackerService.ActivateModeAsync(Mode, cancellation.Token);

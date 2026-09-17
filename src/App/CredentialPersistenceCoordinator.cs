@@ -19,26 +19,39 @@ internal static class CredentialPersistenceCoordinator
         if (!result.Succeeded)
             return result;
 
+        await RestoreIfCanceledAsync(restorePrevious, cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    /// <summary>
+    /// Restores the previous credential and throws <see cref="OperationCanceledException"/>
+    /// when <paramref name="cancellationToken"/> is already canceled; otherwise returns.
+    /// The check inside <see cref="PersistCandidateAsync"/> runs off the caller's context, so a
+    /// dismissal that lands while the caller's continuation is queued is invisible to it.
+    /// Callers must repeat this once they resume on their own dispatcher, before treating
+    /// the candidate as committed.
+    /// </summary>
+    internal static async Task RestoreIfCanceledAsync(
+        Func<Task<SettingSaveResult>> restorePrevious,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(restorePrevious);
+        if (!cancellationToken.IsCancellationRequested)
+            return;
+
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return result;
+            SettingSaveResult restored = await restorePrevious().ConfigureAwait(false);
+            if (!restored.Succeeded)
+                Logger.LogWarning("Unable to restore a credential after the replacement was canceled.");
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception exception)
         {
-            try
-            {
-                SettingSaveResult restored = await restorePrevious().ConfigureAwait(false);
-                if (!restored.Succeeded)
-                    Logger.LogWarning("Unable to restore a credential after the replacement was canceled.");
-            }
-            catch (Exception exception)
-            {
-                // The original cancellation must still propagate; log rollback
-                // failures instead of masking the OperationCanceledException.
-                Logger.LogWarning("Unable to restore a credential after the replacement was canceled.", exception);
-            }
-            throw;
+            // The cancellation must still propagate; log rollback failures
+            // instead of masking the OperationCanceledException.
+            Logger.LogWarning("Unable to restore a credential after the replacement was canceled.", exception);
         }
+        cancellationToken.ThrowIfCancellationRequested();
     }
 }
