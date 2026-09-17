@@ -87,3 +87,7 @@ Triage with product risk (native, WebView, JSON, auth). Prefer minimal fixing up
 - CSharpier version pinned in `dotnet-tools.json`.
 - Restore tools: `dotnet tool restore`.
 - Invoke: `dotnet csharpier check .` / `dotnet csharpier format .`.
+
+## npm tooling overrides
+
+`package.json` only carries the dev-only Markdown lint toolchain (`markdownlint-cli2`, pinned exactly); it is not a product runtime dependency. CI gates it with `npm audit --audit-level=high`. When an advisory lands on a transitive package that the pinned tool exact-pins and no tool release on a patched version exists yet, an npm `overrides` entry pinning that transitive package to the first patched version is the intended remedy. It keeps the audit policy intact instead of disabling it and is not a casual upgrade. `package.json` cannot carry comments, so record the advisory ID and reason in the commit that adds the override, and remove the override once the tool ships a release that resolves the advisory on its own.

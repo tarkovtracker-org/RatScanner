@@ -79,8 +79,7 @@
 
     private void Cancel()
     {
-        _validation?.Cancel();
-        _validation?.Dispose();
+        ReleaseValidation();
         DialogInstance.Cancel();
     }
 
@@ -90,9 +89,7 @@
         if (string.IsNullOrWhiteSpace(candidate) || _testing)
             return;
 
-        _validation?.Cancel();
-        _validation?.Dispose();
-        CancellationTokenSource cancellation = new();
+        using CancellationTokenSource cancellation = new();
         _validation = cancellation;
         _testing = true;
         _error = null;
@@ -111,20 +108,27 @@
             }
 
             string previousToken = RatConfig.Tracking.TarkovTracker.TokenForMode(Mode);
+            Task<SettingSaveResult> RestorePrevious() => SettingsVM.SetTarkovTrackerOrgTokenAsync(Mode, previousToken);
             SettingSaveResult saved = await CredentialPersistenceCoordinator.PersistCandidateAsync(
                 () => SettingsVM.SetTarkovTrackerOrgTokenAsync(Mode, candidate),
-                () => SettingsVM.SetTarkovTrackerOrgTokenAsync(Mode, previousToken),
+                RestorePrevious,
                 cancellation.Token
             );
             if (!saved.Succeeded)
             {
+                cancellation.Token.ThrowIfCancellationRequested();
                 _error = Localizer["CredentialSaveFailed"];
                 return;
             }
 
+            // Dismissal may land while this continuation is queued, after the
+            // coordinator's own check; the committed candidate must still roll back.
+            await CredentialPersistenceCoordinator.RestoreIfCanceledAsync(RestorePrevious, cancellation.Token);
+
             if (RatConfig.GameMode == Mode)
                 await TrackerService.ActivateModeAsync(Mode, cancellation.Token);
 
+            cancellation.Token.ThrowIfCancellationRequested();
             DialogInstance.Close(DialogResult.Ok(true));
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
@@ -134,7 +138,6 @@
             {
                 _testing = false;
                 _validation = null;
-                cancellation.Dispose();
             }
         }
     }
@@ -152,10 +155,15 @@
         _ => Localizer["CredentialUnexpectedResponse"],
     };
 
-    public void Dispose()
+    public void Dispose() => ReleaseValidation();
+
+    // Detach before cancellation so repeated/reentrant dismissal is harmless.
+    // SubmitAsync owns disposal: its continuation may still need the source after
+    // a validation or activation completes during dismissal.
+    private void ReleaseValidation()
     {
-        _validation?.Cancel();
-        _validation?.Dispose();
+        CancellationTokenSource? validation = _validation;
         _validation = null;
+        validation?.Cancel();
     }
 }

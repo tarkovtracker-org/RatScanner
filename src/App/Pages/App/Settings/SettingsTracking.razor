@@ -202,9 +202,7 @@
         if (string.IsNullOrWhiteSpace(candidate) || _testing[mode])
             return;
 
-        _validation[mode]?.Cancel();
-        _validation[mode]?.Dispose();
-        CancellationTokenSource cancellation = new();
+        using CancellationTokenSource cancellation = new();
         _validation[mode] = cancellation;
         string previousToken = RatConfig.Tracking.TarkovTracker.TokenForMode(mode);
         _testing[mode] = true;
@@ -225,13 +223,15 @@
                 return;
             }
 
+            Task<SettingSaveResult> RestorePrevious() => SettingsVM.SetTarkovTrackerOrgTokenAsync(mode, previousToken);
             SettingSaveResult saved = await CredentialPersistenceCoordinator.PersistCandidateAsync(
                 () => SettingsVM.SetTarkovTrackerOrgTokenAsync(mode, candidate),
-                () => SettingsVM.SetTarkovTrackerOrgTokenAsync(mode, previousToken),
+                RestorePrevious,
                 cancellation.Token
             );
             if (!saved.Succeeded)
             {
+                cancellation.Token.ThrowIfCancellationRequested();
                 _error[mode] = Localizer["CredentialSaveFailed"];
                 // The candidate never reached storage, so the stored key is still the
                 // previous one and nothing verified it during this attempt. Report it
@@ -242,9 +242,14 @@
                 return;
             }
 
+            // Dismissal may land while this continuation is queued, after the
+            // coordinator's own check; the committed candidate must still roll back.
+            await CredentialPersistenceCoordinator.RestoreIfCanceledAsync(RestorePrevious, cancellation.Token);
+
             if (RatConfig.GameMode == mode)
             {
                 await TrackerService.ActivateModeAsync(mode, cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
                 _state[mode] = TrackerService.State.ConnectionState;
             }
             else
@@ -266,7 +271,6 @@
                         : TrackerConnectionState.NotConfigured;
                 _testing[mode] = false;
                 _validation[mode] = null;
-                cancellation.Dispose();
             }
         }
     }
@@ -384,10 +388,12 @@
 
     public void Dispose()
     {
-        foreach (CancellationTokenSource? validation in _validation.Values)
-        {
+        // Detach all sources before cancellation callbacks can resume ConnectAsync.
+        // Each operation owns disposal after its final continuation has finished.
+        CancellationTokenSource?[] validations = _validation.Values.ToArray();
+        foreach (GameMode mode in Modes)
+            _validation[mode] = null;
+        foreach (CancellationTokenSource? validation in validations)
             validation?.Cancel();
-            validation?.Dispose();
-        }
     }
 }

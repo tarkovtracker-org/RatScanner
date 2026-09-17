@@ -59,6 +59,57 @@ public sealed class CredentialPersistenceCoordinatorTests
     }
 
     [Fact]
+    public async Task Late_cancellation_check_restores_the_previous_value_then_throws()
+    {
+        bool previousRestored = false;
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
+
+        Task operation = CredentialPersistenceCoordinator.RestoreIfCanceledAsync(
+            () =>
+            {
+                previousRestored = true;
+                return Task.FromResult(new SettingSaveResult(true));
+            },
+            cancellation.Token
+        );
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => operation);
+        Assert.True(previousRestored);
+    }
+
+    [Fact]
+    public async Task Late_cancellation_check_still_throws_when_restore_throws()
+    {
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
+
+        Task operation = CredentialPersistenceCoordinator.RestoreIfCanceledAsync(
+            () => throw new InvalidOperationException("restore failed"),
+            cancellation.Token
+        );
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => operation);
+    }
+
+    [Fact]
+    public async Task Late_cancellation_check_is_a_no_op_without_cancellation()
+    {
+        bool previousRestored = false;
+
+        await CredentialPersistenceCoordinator.RestoreIfCanceledAsync(
+            () =>
+            {
+                previousRestored = true;
+                return Task.FromResult(new SettingSaveResult(true));
+            },
+            CancellationToken.None
+        );
+
+        Assert.False(previousRestored);
+    }
+
+    [Fact]
     public async Task Failed_candidate_save_does_not_restore_or_throw()
     {
         bool previousRestored = false;
