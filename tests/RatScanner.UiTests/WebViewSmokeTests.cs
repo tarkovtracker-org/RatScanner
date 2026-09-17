@@ -119,6 +119,8 @@ public sealed class WebViewSmokeTests
                     await page.GetByRole(AriaRole.Heading, new() { Level = 1 }).TextContentAsync()
                 )
             );
+            await AssertAboutVerticalRhythmAsync(page);
+            await session.ScreenshotAsync("desktop-about.png");
 
             await page.Locator("a[href='/app/settings/general']").ClickAsync();
             await page.WaitForURLAsync("**/app/settings/general");
@@ -330,6 +332,73 @@ public sealed class WebViewSmokeTests
             box[4] >= box[0] - 0.5 && box[5] >= box[1] - 0.5 && box[6] <= box[2] + 0.5 && box[7] <= box[3] + 0.5,
             $"{surface}: item art image overflows the frame (frame [{box[0]:0.##},{box[1]:0.##},{box[2]:0.##},{box[3]:0.##}] "
                 + $"vs img [{box[4]:0.##},{box[5]:0.##},{box[6]:0.##},{box[7]:0.##}])."
+        );
+    }
+
+    private static async Task AssertAboutVerticalRhythmAsync(IPage page)
+    {
+        // The About card uses two spacing steps: a "text" step between adjacent text
+        // lines (and between a section heading and its content) and a larger "block"
+        // step between blocks and around section separators. Every child must resolve
+        // to one of those two values so the page reads with one consistent rhythm.
+        double[] px = await page.EvaluateAsync<double[]>(
+            """
+            () => {
+                const value = (selector, property) => {
+                    const element = document.querySelector(selector);
+                    if (!element) throw new Error('About rhythm probe: missing ' + selector);
+                    return parseFloat(getComputedStyle(element)[property]);
+                };
+                return [
+                    value('.about-intro', 'rowGap'),
+                    value('.related-projects__title', 'marginBottom'),
+                    value('.related-projects__list', 'rowGap'),
+                    value('.about-license__title', 'marginBottom'),
+                    value('.about-actions', 'marginTop'),
+                    value('.related-projects', 'marginTop'),
+                    value('.related-projects', 'paddingTop'),
+                    value('.about-license', 'marginTop'),
+                    value('.about-license', 'paddingTop'),
+                    value('.about-maintainers', 'marginTop'),
+                ];
+            }
+            """
+        );
+
+        double textStep = px[0];
+        double blockStep = px[4];
+        Assert.True(
+            textStep > 0 && blockStep > textStep,
+            $"About rhythm steps are not ordered (text {textStep}px, block {blockStep}px)."
+        );
+        string[] textSurfaces = ["intro gap", "related-projects title", "related-projects list gap", "license title"];
+        for (int i = 0; i < textSurfaces.Length; i++)
+        {
+            Assert.True(
+                Math.Abs(px[i] - textStep) < 0.5,
+                $"About {textSurfaces[i]} uses {px[i]}px instead of the {textStep}px text step."
+            );
+        }
+
+        string[] blockSurfaces =
+        [
+            "actions margin-top",
+            "related-projects margin-top",
+            "related-projects padding-top",
+            "license margin-top",
+            "license padding-top",
+        ];
+        for (int i = 0; i < blockSurfaces.Length; i++)
+        {
+            Assert.True(
+                Math.Abs(px[4 + i] - blockStep) < 0.5,
+                $"About {blockSurfaces[i]} uses {px[4 + i]}px instead of the {blockStep}px block step."
+            );
+        }
+
+        Assert.True(
+            Math.Abs(px[9]) < 0.5,
+            $"About maintainers line carries a {px[9]}px margin hack instead of relying on the intro gap."
         );
     }
 

@@ -1,5 +1,13 @@
 .about-page {
-    padding: 8px 16px 16px;
+    /* Vertical rhythm scale shared by every child of the card:
+       text  — adjacent text lines, or a section heading and its content
+       block — blocks inside the card (text → actions, section separators)
+       card  — card padding */
+    --about-space-text: 6px;
+    --about-space-block: 12px;
+    --about-space-card: 16px;
+
+    padding: 8px var(--about-space-card) var(--about-space-card);
     max-width: 520px;
     margin: 0 auto;
 }
@@ -22,14 +30,14 @@
     background: var(--rs-surface);
     border: 1px solid var(--rs-border);
     border-radius: var(--rs-radius);
-    padding: 16px;
+    padding: var(--about-space-card);
     container-type: inline-size;
 }
 
 /* Intro section — identity, description, maintainers grouped together */
 .about-intro {
     display: grid;
-    gap: 6px;
+    gap: var(--about-space-text);
 }
 
 /* Identity — name + version on one line */
@@ -56,10 +64,10 @@
     line-height: 1.4;
 }
 
-/* Maintainer credits — tighten gap after description */
+/* Maintainer credits — spacing comes from the intro grid gap */
 .about-maintainers {
     color: var(--rs-text-2);
-    margin: -2px 0 0;
+    margin: 0;
     line-height: 1.4;
 }
 
@@ -83,7 +91,7 @@
 
 /* Actions section — buttons */
 .about-actions {
-    margin-top: 12px;
+    margin-top: var(--about-space-block);
 }
 
 /* Primary action buttons — 2-column grid */
@@ -142,13 +150,13 @@
 
 /* Related projects — border-top separator, not a MudDivider */
 .related-projects {
-    margin-top: 14px;
-    padding-top: 12px;
+    margin-top: var(--about-space-block);
+    padding-top: var(--about-space-block);
     border-top: 1px solid var(--rs-border);
 }
 
 .related-projects__title {
-    margin: 0 0 10px;
+    margin: 0 0 var(--about-space-text);
     color: var(--rs-text);
     font: inherit;
     font-size: 0.875rem;
@@ -157,7 +165,7 @@
 
 .related-projects__list {
     display: grid;
-    gap: 7px;
+    gap: var(--about-space-text);
 }
 
 /* Inline project row — name and description on one line, wrap naturally */
@@ -213,13 +221,13 @@
 
 /* License footer — border-top separator, distinct from related projects */
 .about-license {
-    margin-top: 14px;
-    padding-top: 12px;
+    margin-top: var(--about-space-block);
+    padding-top: var(--about-space-block);
     border-top: 1px solid var(--rs-border);
 }
 
 .about-license__title {
-    margin: 0 0 6px;
+    margin: 0 0 var(--about-space-text);
     color: var(--rs-text);
     font: inherit;
     font-size: 0.875rem;
