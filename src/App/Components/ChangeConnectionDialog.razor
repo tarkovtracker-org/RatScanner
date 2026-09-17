@@ -79,8 +79,7 @@
 
     private void Cancel()
     {
-        _validation?.Cancel();
-        _validation?.Dispose();
+        ReleaseValidation();
         DialogInstance.Cancel();
     }
 
@@ -152,10 +151,16 @@
         _ => Localizer["CredentialUnexpectedResponse"],
     };
 
-    public void Dispose()
+    public void Dispose() => ReleaseValidation();
+
+    // Cancel and Dispose can both run for one dismissal (Cancel button closes the
+    // dialog, then Blazor disposes the component). Clearing the field here keeps the
+    // second call from invoking Cancel() on an already-disposed CancellationTokenSource.
+    private void ReleaseValidation()
     {
-        _validation?.Cancel();
-        _validation?.Dispose();
+        CancellationTokenSource? validation = _validation;
         _validation = null;
+        validation?.Cancel();
+        validation?.Dispose();
     }
 }
