@@ -66,6 +66,7 @@ internal static class UserActivityHelper
     }
 
     private const int CursorShowing = 0x00000001;
+    private const int CursorSuppressed = 0x00000002;
 
     /// <summary>
     /// Whether the system cursor is currently shown; null when Windows cannot say.
@@ -76,6 +77,10 @@ internal static class UserActivityHelper
     {
         CursorInfo info = new() { Size = Marshal.SizeOf<CursorInfo>() };
         if (!GetCursorInfo(ref info))
+            return null;
+        // Suppressed means touch/pen input is driving the screen, not that the game
+        // hid the cursor; report it as unknown so it never blocks a scan.
+        if ((info.Flags & CursorSuppressed) != 0)
             return null;
         return (info.Flags & CursorShowing) != 0;
     }
