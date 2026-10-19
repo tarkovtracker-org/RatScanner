@@ -42,14 +42,18 @@ function Get-GpuRunningTime {
     # paths, the CIM class name is not localized.
     $pidSet = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($id in $ProcessIds) { [void]$pidSet.Add($id) }
-    $byEngineType = @{}
+    # Keyed by full instance name so deltas are taken per engine instance; summing by
+    # type first would let one instance exiting cancel out another's usage.
+    $byInstance = @{}
     foreach ($engine in Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUEngine) {
         if ($engine.Name -notmatch '^pid_(\d+)_.*_engtype_(.+)$') { continue }
         if (-not $pidSet.Contains([int]$Matches[1])) { continue }
-        $engineType = $Matches[2]
-        $byEngineType[$engineType] = [long]$byEngineType[$engineType] + [long]$engine.RunningTime
+        $byInstance[$engine.Name] = [pscustomobject]@{
+            EngineType = $Matches[2]
+            RunningTime = [long]$engine.RunningTime
+        }
     }
-    return $byEngineType
+    return $byInstance
 }
 
 function Get-ProcessTreeSnapshot {
@@ -128,16 +132,20 @@ try {
             0
         }
 
-        # GPU percent per engine type = busy time / wall time. Processes that exit
-        # between samples drop out of the sum, so clamp negative deltas to zero.
+        # GPU percent = busy time / wall time, per engine instance present in both
+        # samples (a new instance's prior cumulative time is not from this interval),
+        # then summed by engine type.
         $gpu3DPercent = 0.0
         $gpuAllEnginesPercent = 0.0
         if ($elapsedMilliseconds -gt 0) {
-            foreach ($engineType in $current.GpuRunningTime.Keys) {
-                $delta = [long]$current.GpuRunningTime[$engineType] - [long]$previous.GpuRunningTime[$engineType]
+            foreach ($instanceName in $current.GpuRunningTime.Keys) {
+                $before = $previous.GpuRunningTime[$instanceName]
+                if ($null -eq $before) { continue }
+                $instance = $current.GpuRunningTime[$instanceName]
+                $delta = $instance.RunningTime - $before.RunningTime
                 $percent = [Math]::Max(0, $delta / 10000.0 / $elapsedMilliseconds * 100)
                 $gpuAllEnginesPercent += $percent
-                if ($engineType -eq '3D') { $gpu3DPercent += $percent }
+                if ($instance.EngineType -eq '3D') { $gpu3DPercent += $percent }
             }
         }
 
