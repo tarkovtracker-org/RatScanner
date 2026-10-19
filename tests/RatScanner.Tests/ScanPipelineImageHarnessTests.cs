@@ -17,6 +17,11 @@ namespace RatScanner.Tests;
 /// Mirrors RatScannerMain.NameScan / IconScan with the same config, crop math, and
 /// offline tarkov.dev item database. The captures remain untracked local artifacts.
 /// </summary>
+/// <remarks>
+/// Serialized with the RatConfig mutators: the offline cache key depends on the game
+/// mode and language, so a parallel config test made these tests skip at random.
+/// </remarks>
+[Collection(RatConfigCollection.Name)]
 public class ScanPipelineImageHarnessTests
 {
     private readonly ITestOutputHelper _output;
