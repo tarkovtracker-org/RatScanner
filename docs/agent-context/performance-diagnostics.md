@@ -93,6 +93,7 @@ ones:
 | `window.fit_resize` | Main-window height writes; each resizes the WebView2 surface (content-fit animation is intentionally capped near 30 Hz) |
 | `window.fit_animation_started` | Content-fit animations begun |
 | `engine.rebuild_on_scan_path` | Engine rebuilds that happened inside a scan |
+| `engine.icon_warmup_ms` | Last background icon-template warm-up duration after an engine publish |
 | `scan.throttled` | Scans dropped by the cooldown |
 
 ## Adding a stage
@@ -121,7 +122,7 @@ JSON goes to the gitignored `data/bench/`.
 | Benchmark | Command | Measures |
 | --- | --- | --- |
 | Idle cost | `scripts\bench\measure-idle.ps1 -Label <name>` | CPU ms/s, GPU 3D and all-engine percent (raw GPU engine counters), memory, for the app plus its WebView2 child processes |
-| Icon latency | `dotnet test tests\RatScanner.Tests -c Release --filter IconScan_latency_profile` (set `RATSCANNER_BENCH_OUT=data\bench` for JSON) | Engine build, cold first icon scan, warm p50/max, rebuild, first scan after a rebuild |
+| Icon latency | `dotnet test tests\RatScanner.Tests -c Release --filter IconScan_latency_profile` (set `RATSCANNER_BENCH_OUT=data\bench` for JSON) | Engine build, cold first icon scan, warm p50/max, rebuild, first scan after a rebuild, background warm-up, first scan after warm-up |
 | Accuracy | `RatEye.Benchmarks` replay of `*.ratdiag.json` manifests | Expected item ids per capture plus stage timings |
 
 The latency harness needs the untracked repo-root screenshots and an offline
@@ -138,3 +139,11 @@ Baseline (Release, 2560x1440 fixtures, one dev machine, before the scan-path fix
 | Engine rebuild | ~70 ms |
 | First icon scan after a rebuild | ~490 ms |
 | Idle GPU 3D / CPU median | 0% / 0 ms/s (p95 CPU ~28 ms/s) |
+
+After icon-template warm-up (same machine and fixtures):
+
+| Metric | Value |
+| --- | --- |
+| Background warm-up of the four most common slot sizes | ~620 ms (~2.1 s on a cold disk cache) |
+| First icon scan after an engine build + warm-up | ~195-230 ms (was ~490-550 ms) |
+| Idle private bytes | ~715 MB (was ~692 MB) |
