@@ -994,8 +994,22 @@ public sealed class RatScannerMain
     private void RefreshGameDisplayForScan()
     {
         bool viewportChanged = RatConfig.RefreshGameDisplayConfiguration();
-        Logger.LogDebug($"RefreshGameDisplayForScan: viewportChanged={viewportChanged}");
-        if (viewportChanged)
+        // Rebuild when the published engine's scale disagrees with the current viewport,
+        // not only on the refresh that observed the change: RefreshGameDisplayConfiguration
+        // commits the new viewport before any rebuild, so a rebuild that failed (or a
+        // concurrent scan that missed the one-shot flag) would otherwise leave the engine
+        // on the old scale until restart.
+        RatEyeEngine? engine = RatEyeEngine;
+        bool engineScaleStale =
+            engine is not null
+            && GameDisplayRefreshPolicy.EngineScaleIsStale(
+                engine.Config.ProcessingConfig.Scale,
+                new Size(RatConfig.ScreenWidth, RatConfig.ScreenHeight)
+            );
+        Logger.LogDebug(
+            $"RefreshGameDisplayForScan: viewportChanged={viewportChanged} engineScaleStale={engineScaleStale}"
+        );
+        if (engineScaleStale)
         {
             // A rebuild here is on the scan critical path and reconstructs the whole
             // item database plus the OCR engine, so it must be visible in the trace.
