@@ -93,7 +93,8 @@ ones:
 | `window.fit_resize` | Main-window height writes; each resizes the WebView2 surface (content-fit animation is intentionally capped near 30 Hz) |
 | `window.fit_animation_started` | Content-fit animations begun |
 | `engine.rebuild_on_scan_path` | Engine rebuilds that happened inside a scan |
-| `scan.throttled` | Scans dropped by the cooldown |
+| `scan.throttled` | Scans dropped by the cooldown (name and icon scans have separate cooldowns) |
+| `scan.name_skipped_cursor_hidden` | Name-scan clicks skipped because the system cursor was hidden (in raid); `NameScan.SkipWhenCursorHidden` in `config.cfg` turns this off |
 
 ## Adding a stage
 

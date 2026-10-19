@@ -93,12 +93,16 @@ public sealed class RatScannerMain
     internal static object IconScanLock = new();
 
     /// <summary>
-    /// Caps the scan rate across all per-position scan entry points (name scan
-    /// and icon scan). Hotkey spam must not be able to drive the OCR pipeline
-    /// and the overlay compositor at unbounded rate. NameScanScreen is exempt:
-    /// it is opt-in and already debounced by the 500 ms auto-scan click window.
+    /// Cap the scan rate per scan kind, so hotkey spam cannot drive the OCR pipeline
+    /// and the overlay compositor at unbounded rate. Name and icon scans are throttled
+    /// separately: name scans run on every left click, and a shared window let any
+    /// click silently swallow the Shift+click icon scan that followed it.
+    /// NameScanScreen is exempt: it is opt-in and already debounced by the 500 ms
+    /// auto-scan click window.
     /// </summary>
-    private readonly ScanThrottle _scanThrottle = new(RatConfig.NameScan.CooldownMs);
+    private readonly ScanThrottle _nameScanThrottle = new(RatConfig.NameScan.CooldownMs);
+
+    private readonly ScanThrottle _iconScanThrottle = new(RatConfig.NameScan.CooldownMs);
 
     private readonly RebuildCoordinator _rebuildCoordinator;
     private readonly EngineLifecycleGate<RatEyeEngine> _engineLifecycle = new();
@@ -579,7 +583,9 @@ public sealed class RatScannerMain
     /// </param>
     internal void NameScan(Vector2 position, double hookObservedAtMs = 0)
     {
-        if (!_scanThrottle.TryAcquire(Environment.TickCount64))
+        if (ShouldSkipNameScanForHiddenCursor())
+            return;
+        if (!_nameScanThrottle.TryAcquire(Environment.TickCount64))
         {
             PerfTraceStore.Increment("scan.throttled");
             Logger.LogDebug("NameScan: skipped (scan cooldown active)");
@@ -701,6 +707,8 @@ public sealed class RatScannerMain
     /// </summary>
     internal void NameScanScreen(object? _ = null)
     {
+        if (ShouldSkipNameScanForHiddenCursor())
+            return;
         RefreshGameDisplayForScan();
         lock (NameScanLock)
         {
@@ -791,7 +799,7 @@ public sealed class RatScannerMain
     /// <returns><see langword="true"/> if a item was scanned successfully</returns>
     internal void IconScan(Vector2 position, double hookObservedAtMs = 0)
     {
-        if (!_scanThrottle.TryAcquire(Environment.TickCount64))
+        if (!_iconScanThrottle.TryAcquire(Environment.TickCount64))
         {
             PerfTraceStore.Increment("scan.throttled");
             Logger.LogDebug("IconScan: skipped (scan cooldown active)");
@@ -989,6 +997,15 @@ public sealed class RatScannerMain
 
         using (trace.Measure("scan.screenshot"))
             return GetScreenshot(position, size);
+    }
+
+    private static bool ShouldSkipNameScanForHiddenCursor()
+    {
+        if (!NameScanGate.ShouldSkip(RatConfig.NameScan.SkipWhenCursorHidden, UserActivityHelper.IsCursorShowing()))
+            return false;
+        PerfTraceStore.Increment("scan.name_skipped_cursor_hidden");
+        Logger.LogDebug("NameScan: skipped (system cursor hidden)");
+        return true;
     }
 
     private void RefreshGameDisplayForScan()

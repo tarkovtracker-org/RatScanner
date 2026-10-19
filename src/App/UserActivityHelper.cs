@@ -52,6 +52,34 @@ internal static class UserActivityHelper
         return new Vector2(w32Mouse.X, w32Mouse.Y);
     }
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorInfo(ref CursorInfo info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CursorInfo
+    {
+        public int Size;
+        public int Flags;
+        public nint Cursor;
+        public Win32Point ScreenPosition;
+    }
+
+    private const int CursorShowing = 0x00000001;
+
+    /// <summary>
+    /// Whether the system cursor is currently shown; null when Windows cannot say.
+    /// Games hide it while the player is aiming (in raid) and show it in menus and
+    /// the inventory.
+    /// </summary>
+    internal static bool? IsCursorShowing()
+    {
+        CursorInfo info = new() { Size = Marshal.SizeOf<CursorInfo>() };
+        if (!GetCursorInfo(ref info))
+            return null;
+        return (info.Flags & CursorShowing) != 0;
+    }
+
     public static int MouseButtonToVKey(MouseButton mouseButton)
     {
         return mouseButton switch
