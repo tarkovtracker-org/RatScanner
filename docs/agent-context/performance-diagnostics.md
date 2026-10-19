@@ -112,3 +112,29 @@ dotnet test RatScanner.sln
 `PerfTraceTests` and `PerfTraceStoreTests` cover ordering, clamping, correlation,
 retention, and report rendering. Timings themselves need a manual run: start via
 `dev.bat`, scan an item, then read `Log.txt`.
+
+## Benchmarks
+
+Performance changes report before/after numbers from these local benchmarks. Raw
+JSON goes to the gitignored `data/bench/`.
+
+| Benchmark | Command | Measures |
+| --- | --- | --- |
+| Idle cost | `scripts\bench\measure-idle.ps1 -Label <name>` | CPU ms/s, GPU 3D and all-engine percent (raw GPU engine counters), memory, for the app plus its WebView2 child processes |
+| Icon latency | `dotnet test tests\RatScanner.Tests -c Release --filter IconScan_latency_profile` (set `RATSCANNER_BENCH_OUT=data\bench` for JSON) | Engine build, cold first icon scan, warm p50/max, rebuild, first scan after a rebuild |
+| Accuracy | `RatEye.Benchmarks` replay of `*.ratdiag.json` manifests | Expected item ids per capture plus stage timings |
+
+The latency harness needs the untracked repo-root screenshots and an offline
+tarkov.dev cache (run the app once); it skips otherwise. Game screenshots stay
+local fixtures, not CI inputs.
+
+Baseline (Release, 2560x1440 fixtures, one dev machine, before the scan-path fixes):
+
+| Metric | Value |
+| --- | --- |
+| Engine build | ~320-360 ms |
+| First icon scan (cold disk / warm disk) | ~2080 ms / ~620 ms |
+| Warm icon scan p50 / max | ~185 ms / ~210 ms |
+| Engine rebuild | ~70 ms |
+| First icon scan after a rebuild | ~490 ms |
+| Idle GPU 3D / CPU median | 0% / 0 ms/s (p95 CPU ~28 ms/s) |

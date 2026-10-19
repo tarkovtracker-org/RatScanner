@@ -1,9 +1,11 @@
 #nullable enable
 
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using Newtonsoft.Json;
 using RatEye;
 using Xunit;
 using TarkovItem = RatScanner.TarkovDev.Item;
@@ -47,7 +49,7 @@ public class ScanPipelineImageHarnessTests
         }
     }
 
-    private static RatEyeEngine CreateEngine(bool highlighted = true)
+    private static RatEyeEngine CreateEngine(bool highlighted = true, bool useCache = false)
     {
         string data = Path.Combine(AppContext.BaseDirectory, "Data");
         Config config = new()
@@ -59,7 +61,7 @@ public class ScanPipelineImageHarnessTests
             },
             ProcessingConfig = new Config.Processing
             {
-                UseCache = false,
+                UseCache = useCache,
                 Scale = Config.Processing.Resolution2Scale(ScreenWidth, ScreenHeight),
                 Language = RatStash.Language.English,
                 IconConfig = new Config.Processing.Icon
@@ -190,6 +192,92 @@ public class ScanPipelineImageHarnessTests
             icon.DetectionConfidence > RatConfig.IconScan.MinAcceptConfidence,
             $"Genuine grid match fell below the acceptance floor: {icon.DetectionConfidence}"
         );
+    }
+
+    /// <summary>
+    /// Latency profile for the icon-scan path the app actually runs: an engine with the
+    /// icon cache enabled (RatConfig.IconScan.UseCachedIcons), a cold first scan, warm
+    /// repeats, and the first scan after a rebuild (what a catalog refresh or display
+    /// change triggers). Timings are reported, not asserted, because they depend on the
+    /// machine; identity is asserted on every iteration so flapping results fail.
+    /// Set RATSCANNER_BENCH_OUT to a directory to also write a JSON report.
+    /// </summary>
+    [Fact]
+    public void IconScan_latency_profile_cold_warm_and_after_rebuild()
+    {
+        const int warmIterations = 10;
+        using Bitmap screenshot = LoadScreenshot("image copy 3.png");
+        Rectangle cell = new(409, 119, 104, 104);
+        using Bitmap crop = screenshot.Clone(cell, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+
+        double ScanOnce(RatEyeEngine engine)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            using RatEye.Processing.Icon icon = engine.NewIcon(
+                crop,
+                Vector2.Zero,
+                new Vector2(cell.Width, cell.Height)
+            );
+            string? name = icon.Item?.Name;
+            stopwatch.Stop();
+            Assert.Equal("WD-40 (100ml)", name);
+            return stopwatch.Elapsed.TotalMilliseconds;
+        }
+
+        Stopwatch build = Stopwatch.StartNew();
+        RatEyeEngine first = CreateEngine(highlighted: true, useCache: true);
+        build.Stop();
+        double cold;
+        double[] warm = new double[warmIterations];
+        try
+        {
+            cold = ScanOnce(first);
+            for (int i = 0; i < warmIterations; i++)
+                warm[i] = ScanOnce(first);
+        }
+        finally
+        {
+            first.Dispose();
+        }
+
+        Stopwatch rebuild = Stopwatch.StartNew();
+        using RatEyeEngine second = CreateEngine(highlighted: true, useCache: true);
+        rebuild.Stop();
+        double afterRebuild = ScanOnce(second);
+
+        Array.Sort(warm);
+        double warmP50 = warm[warm.Length / 2];
+        double warmMax = warm[^1];
+        _output.WriteLine($"engine.build_ms={build.Elapsed.TotalMilliseconds:F1}");
+        _output.WriteLine($"icon.cold_ms={cold:F1}");
+        _output.WriteLine($"icon.warm_p50_ms={warmP50:F1} icon.warm_max_ms={warmMax:F1}");
+        _output.WriteLine($"engine.rebuild_ms={rebuild.Elapsed.TotalMilliseconds:F1}");
+        _output.WriteLine($"icon.first_after_rebuild_ms={afterRebuild:F1}");
+
+        string? outputDirectory = Environment.GetEnvironmentVariable("RATSCANNER_BENCH_OUT");
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            Directory.CreateDirectory(outputDirectory);
+            string report = JsonConvert.SerializeObject(
+                new
+                {
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    Machine = Environment.MachineName,
+                    Fixture = "image copy 3.png WD-40 1x1",
+                    EngineBuildMs = build.Elapsed.TotalMilliseconds,
+                    IconColdMs = cold,
+                    IconWarmP50Ms = warmP50,
+                    IconWarmMaxMs = warmMax,
+                    EngineRebuildMs = rebuild.Elapsed.TotalMilliseconds,
+                    IconFirstAfterRebuildMs = afterRebuild,
+                },
+                Formatting.Indented
+            );
+            File.WriteAllText(
+                Path.Combine(outputDirectory, $"{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}-icon-latency.json"),
+                report
+            );
+        }
     }
 
     [Fact]

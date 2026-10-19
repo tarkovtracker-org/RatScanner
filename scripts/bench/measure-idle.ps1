@@ -34,6 +34,24 @@ function Get-ProcessTreeIds {
     return @($ids)
 }
 
+function Get-GpuRunningTime {
+    param([int[]]$ProcessIds)
+
+    # Raw GPU engine counters expose cumulative RunningTime in 100 ns units per
+    # pid/engine instance. Deltas give exact utilization and, unlike Get-Counter
+    # paths, the CIM class name is not localized.
+    $pidSet = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($id in $ProcessIds) { [void]$pidSet.Add($id) }
+    $byEngineType = @{}
+    foreach ($engine in Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUEngine) {
+        if ($engine.Name -notmatch '^pid_(\d+)_.*_engtype_(.+)$') { continue }
+        if (-not $pidSet.Contains([int]$Matches[1])) { continue }
+        $engineType = $Matches[2]
+        $byEngineType[$engineType] = [long]$byEngineType[$engineType] + [long]$engine.RunningTime
+    }
+    return $byEngineType
+}
+
 function Get-ProcessTreeSnapshot {
     param([int]$RootProcessId)
 
@@ -58,6 +76,7 @@ function Get-ProcessTreeSnapshot {
 
     return [pscustomobject]@{
         ProcessCount = $processCount
+        GpuRunningTime = Get-GpuRunningTime -ProcessIds $ids
         CpuMilliseconds = $cpuMilliseconds
         PrivateBytes = $privateBytes
         WorkingSetBytes = $workingSetBytes
@@ -109,10 +128,25 @@ try {
             0
         }
 
+        # GPU percent per engine type = busy time / wall time. Processes that exit
+        # between samples drop out of the sum, so clamp negative deltas to zero.
+        $gpu3DPercent = 0.0
+        $gpuAllEnginesPercent = 0.0
+        if ($elapsedMilliseconds -gt 0) {
+            foreach ($engineType in $current.GpuRunningTime.Keys) {
+                $delta = [long]$current.GpuRunningTime[$engineType] - [long]$previous.GpuRunningTime[$engineType]
+                $percent = [Math]::Max(0, $delta / 10000.0 / $elapsedMilliseconds * 100)
+                $gpuAllEnginesPercent += $percent
+                if ($engineType -eq '3D') { $gpu3DPercent += $percent }
+            }
+        }
+
         $samples.Add([pscustomobject]@{
             Index = $i + 1
             ElapsedMilliseconds = [Math]::Round($elapsedMilliseconds, 3)
             CpuMillisecondsPerSecond = [Math]::Round($cpuMillisecondsPerSecond, 3)
+            Gpu3DPercent = [Math]::Round($gpu3DPercent, 3)
+            GpuAllEnginesPercent = [Math]::Round($gpuAllEnginesPercent, 3)
             PrivateBytes = $current.PrivateBytes
             WorkingSetBytes = $current.WorkingSetBytes
             ProcessCount = $current.ProcessCount
@@ -123,6 +157,8 @@ try {
     }
 
     $cpuValues = [double[]]($samples | ForEach-Object CpuMillisecondsPerSecond)
+    $gpu3DValues = [double[]]($samples | ForEach-Object Gpu3DPercent)
+    $gpuAllValues = [double[]]($samples | ForEach-Object GpuAllEnginesPercent)
     $privateValues = [double[]]($samples | ForEach-Object PrivateBytes)
     $workingSetValues = [double[]]($samples | ForEach-Object WorkingSetBytes)
     $timestamp = [DateTimeOffset]::UtcNow
@@ -145,6 +181,14 @@ try {
             CpuMillisecondsPerSecond = [ordered]@{
                 Median = Get-Percentile -Values $cpuValues -Percentile 0.5
                 P95 = Get-Percentile -Values $cpuValues -Percentile 0.95
+            }
+            Gpu3DPercent = [ordered]@{
+                Median = Get-Percentile -Values $gpu3DValues -Percentile 0.5
+                P95 = Get-Percentile -Values $gpu3DValues -Percentile 0.95
+            }
+            GpuAllEnginesPercent = [ordered]@{
+                Median = Get-Percentile -Values $gpuAllValues -Percentile 0.5
+                P95 = Get-Percentile -Values $gpuAllValues -Percentile 0.95
             }
             PrivateBytes = [ordered]@{
                 Median = Get-Percentile -Values $privateValues -Percentile 0.5
