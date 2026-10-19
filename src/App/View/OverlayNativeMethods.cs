@@ -20,6 +20,9 @@ internal static class OverlayNativeMethods
 
     internal const nint PassiveClickThroughStyles = WsExToolWindow | WsExTransparent | WsExLayered | WsExNoActivate;
 
+    internal const uint WdaNone = 0x00000000;
+    internal const uint WdaExcludeFromCapture = 0x00000011;
+
     internal delegate bool EnumWindowsProc(nint hWnd, nint lParam);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
@@ -38,6 +41,10 @@ internal static class OverlayNativeMethods
         int cy,
         uint uFlags
     );
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetWindowDisplayAffinity(nint hWnd, uint dwAffinity);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

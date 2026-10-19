@@ -125,6 +125,24 @@ public partial class BlazorOverlay : Window
         // hit-test transparency on the top-level window alone does not cover
         // them. Apply click-through to every descendant as well.
         ApplyStyleToDescendants(handle);
+
+        ApplyCaptureExclusion(handle);
+    }
+
+    private static void ApplyCaptureExclusion(nint handle)
+    {
+        // Keep our own tooltip out of the next scan's screenshot (see
+        // RatConfig.ToolTip.ExcludeFromCapture). Requires Windows 10 2004+; on failure
+        // the overlay simply stays capturable, as before.
+        uint affinity = RatConfig.ToolTip.ExcludeFromCapture
+            ? OverlayNativeMethods.WdaExcludeFromCapture
+            : OverlayNativeMethods.WdaNone;
+        if (!OverlayNativeMethods.SetWindowDisplayAffinity(handle, affinity))
+        {
+            Logger.LogWarning(
+                $"Unable to set overlay capture exclusion (error {System.Runtime.InteropServices.Marshal.GetLastWin32Error()})."
+            );
+        }
     }
 
     private static void ApplyStyleToDescendants(nint parent)
