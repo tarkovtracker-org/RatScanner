@@ -111,6 +111,12 @@ public sealed class RatScannerMain
 
     internal RatEyeEngine RatEyeEngine = null!;
 
+    /// <summary>
+    /// <see cref="ItemDatabaseSignature"/> of the items the published engine was built
+    /// from; null while it was built without items. Guarded by the scan locks.
+    /// </summary>
+    private long? _publishedItemSignature;
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     internal ItemQueue ItemScans = new();
@@ -372,13 +378,14 @@ public sealed class RatScannerMain
     {
         double startedAtMs = PerfTrace.MonotonicMs();
         bool hasItems = false;
+        long? itemSignature = null;
         bool wasPublished = _engineLifecycle.BuildAndPublish(
             () =>
             {
                 Config.LogDebug = RatConfig.LogDebug;
                 Config.Path.LogFile = "RatEyeLog.txt";
                 Config.Path.TesseractLibSearchPath = AppDomain.CurrentDomain.BaseDirectory;
-                Database database = RatStashDatabaseFromTarkovDev(out hasItems);
+                Database database = RatStashDatabaseFromTarkovDev(out hasItems, out itemSignature);
                 return new RatEyeEngine(GetRatEyeConfig(), database);
             },
             replacement =>
@@ -392,6 +399,7 @@ public sealed class RatScannerMain
                             previous = RatEyeEngine;
                         RatEyeEngine = replacement;
                         _ratEyeReady = hasItems;
+                        _publishedItemSignature = itemSignature;
                     }
                 }
 
@@ -474,20 +482,44 @@ public sealed class RatScannerMain
         };
     }
 
-    private static Database RatStashDatabaseFromTarkovDev(out bool hasItems)
+    private static Database RatStashDatabaseFromTarkovDev(out bool hasItems, out long? itemSignature)
     {
         List<RatStash.Item> rsItems = [];
         if (!TarkovDevAPI.TryGetCachedItems(out TarkovItem[] items) || items.Length == 0)
         {
             hasItems = false;
+            itemSignature = null;
             Logger.LogWarning("Items cache not ready; initializing RatEye with empty item database.");
             return RatStash.Database.FromItems(rsItems);
         }
 
         hasItems = true;
+        itemSignature = ItemDatabaseSignature(items);
         foreach (TarkovItem i in items)
             rsItems.Add(ToRatStashItem(i));
         return RatStash.Database.FromItems(rsItems);
+    }
+
+    /// <summary>
+    /// Order-independent hash of exactly the item fields <see cref="ToRatStashItem"/>
+    /// copies into the engine. Price refreshes leave it unchanged, so they do not need
+    /// an engine rebuild (which also discards the warm icon-template cache).
+    /// </summary>
+    internal static long ItemDatabaseSignature(IReadOnlyCollection<TarkovItem> items)
+    {
+        long signature = items.Count;
+        foreach (TarkovItem item in items)
+        {
+            signature += HashCode.Combine(
+                item.Id,
+                item.Name,
+                item.ShortName,
+                Math.Max(1, item.Width),
+                Math.Max(1, item.Height),
+                item.BackgroundColor?.ToLowerInvariant()
+            );
+        }
+        return signature;
     }
 
     internal static RatStash.Item ToRatStashItem(TarkovItem item)
@@ -522,6 +554,22 @@ public sealed class RatScannerMain
 
         try
         {
+            long? publishedSignature;
+            lock (IconScanLock)
+                publishedSignature = _ratEyeReady ? _publishedItemSignature : null;
+            if (
+                publishedSignature is not null
+                && TarkovDevAPI.TryGetCachedItems(out TarkovItem[] refreshed)
+                && refreshed.Length > 0
+                && ItemDatabaseSignature(refreshed) == publishedSignature
+            )
+            {
+                // Hourly price refreshes do not change anything the engine uses.
+                PerfTraceStore.Increment("engine.rebuild_skipped_unchanged_items");
+                Logger.LogInfo("Items cache updated; scan-relevant item data unchanged, keeping RatEye.");
+                return;
+            }
+
             Logger.LogInfo("Items cache updated; reinitializing RatEye...");
             SetupRatEye();
 
