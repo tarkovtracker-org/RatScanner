@@ -55,7 +55,7 @@
 		<!-- Pin the composition-control SDK directly instead of accepting the older transitive version. -->
 		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
 		<PackageReference Include="MudBlazor" Version="9.7.0" />
-		<PackageReference Include="Microsoft.Windows.Compatibility" Version="10.0.10" />
+		<PackageReference Include="Microsoft.Windows.Compatibility" Version="10.0.13" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 		<PackageReference Include="NuGet.Versioning" Version="7.6.0" />
 		<PackageReference Include="RatStash" Version="6.0.0" />

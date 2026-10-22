@@ -1,0 +1,9 @@
+# markdownlint-cli ignore patterns (gitignore syntax). Rules live in .markdownlint.json.
+# Check:  npm run lint:md     |  scripts\lint-markdown.ps1
+# Fix:    npm run lint:md:fix |  scripts\lint-markdown.ps1 -Fix
+**/node_modules/**
+**/bin/**
+**/obj/**
+**/publish/**
+**/.vs/**
+src/ScanEngine/**
