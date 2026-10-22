@@ -40,6 +40,9 @@ internal static class OverlayNativeMethods
     );
 
     [DllImport("user32.dll")]
+    internal static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool EnumChildWindows(nint hWndParent, EnumWindowsProc lpEnumFunc, nint lParam);
 }

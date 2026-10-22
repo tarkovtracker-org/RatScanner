@@ -22,6 +22,7 @@ public partial class BlazorOverlay : Window
     private DispatcherOperation? _pendingDpiRefresh;
     private DispatcherTimer? _initialSuspendTimer;
     private readonly MenuVM _menuViewModel;
+    private readonly VirtualScreenOffset _virtualScreenOffset;
     private bool _webViewReady;
     private bool _closing;
 
@@ -29,6 +30,7 @@ public partial class BlazorOverlay : Window
     {
         Resources.Add("services", serviceProvider);
         _menuViewModel = serviceProvider.GetRequiredService<MenuVM>();
+        _virtualScreenOffset = serviceProvider.GetRequiredService<VirtualScreenOffset>();
 
         InitializeComponent();
         _menuViewModel.PropertyChanged += MenuViewModel_PropertyChanged;
@@ -69,24 +71,9 @@ public partial class BlazorOverlay : Window
 
     private void SetSize()
     {
-        System.Collections.Generic.IEnumerable<System.Drawing.Rectangle> bounds = Screen.AllScreens.Select(screen =>
-            screen.Bounds
+        System.Drawing.Rectangle virtualScreen = VirtualScreenOffset.VirtualScreenBounds(
+            Screen.AllScreens.Select(screen => screen.Bounds)
         );
-        int left = 0;
-        int top = 0;
-        int right = 0;
-        int bottom = 0;
-        foreach (System.Drawing.Rectangle bound in bounds)
-        {
-            if (bound.Left < left)
-                left = bound.Left;
-            if (bound.Top < top)
-                top = bound.Top;
-            if (bound.Right > right)
-                right = bound.Right;
-            if (bound.Bottom > bottom)
-                bottom = bound.Bottom;
-        }
 
         nint handle = new WindowInteropHelper(this).Handle;
         // SWP_NOZORDER keeps the WPF-declared Topmost state untouched and
@@ -94,11 +81,21 @@ public partial class BlazorOverlay : Window
         OverlayNativeMethods.SetWindowPos(
             handle,
             0,
-            left,
-            top,
-            right - left,
-            bottom - top,
+            virtualScreen.Left,
+            virtualScreen.Top,
+            virtualScreen.Width,
+            virtualScreen.Height,
             OverlayNativeMethods.SwpNoZOrder | OverlayNativeMethods.SwpNoActivate
+        );
+
+        // Recomputed on every show: monitors can be added or rearranged after startup,
+        // and the window's DPI (which WebView2 uses for CSS pixels) is whatever Windows
+        // assigned after this move, not the game display's scale.
+        uint dpi = handle == 0 ? 0 : OverlayNativeMethods.GetDpiForWindow(handle);
+        _virtualScreenOffset.Update(
+            virtualScreen.Left,
+            virtualScreen.Top,
+            dpi > 0 ? dpi / 96.0 : System.Windows.Media.VisualTreeHelper.GetDpi(this).DpiScaleX
         );
     }
 
@@ -263,6 +260,7 @@ public partial class BlazorOverlay : Window
 
     private void HostWindow_DpiChanged(object sender, System.Windows.DpiChangedEventArgs e)
     {
+        _virtualScreenOffset.UpdateScale(e.NewDpi.DpiScaleX);
         WebView2DpiWorkaround.CancelPendingRefresh(ref _pendingDpiRefresh);
         _pendingDpiRefresh = WebView2DpiWorkaround.RefreshAfterDpiChange(_initializedWebView);
     }
