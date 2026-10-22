@@ -25,6 +25,7 @@ public partial class BlazorOverlay : Window
     private bool _webViewReady;
     private bool _closing;
     private bool? _appliedCaptureExclusion;
+    private bool _captureExclusionFailureLogged;
 
     public BlazorOverlay(ServiceProvider serviceProvider)
     {
@@ -133,17 +134,28 @@ public partial class BlazorOverlay : Window
     private void ApplyCaptureExclusion(nint handle)
     {
         // Keep our own tooltip out of the next scan's screenshot (see
-        // RatConfig.ToolTip.ExcludeFromCapture). Requires Windows 10 2004+; on failure
-        // the overlay simply stays capturable, as before. The requested value is
-        // remembered even on failure so an unsupported OS does not retry on every tooltip.
-        bool exclude = RatConfig.ToolTip.ExcludeFromCapture;
-        _appliedCaptureExclusion = exclude;
-        uint affinity = exclude ? OverlayNativeMethods.WdaExcludeFromCapture : OverlayNativeMethods.WdaNone;
-        if (!OverlayNativeMethods.SetWindowDisplayAffinity(handle, affinity))
+        // RatConfig.ToolTip.ExcludeFromCapture). On failure the overlay stays capturable,
+        // as before, and the next tooltip retries; unsupported Windows versions are skipped.
+        int lastError = 0;
+        _appliedCaptureExclusion = OverlayCaptureExclusion.Apply(
+            RatConfig.ToolTip.ExcludeFromCapture,
+            OverlayCaptureExclusion.IsSupported,
+            affinity =>
+            {
+                bool succeeded = OverlayNativeMethods.SetWindowDisplayAffinity(handle, affinity);
+                lastError = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                return succeeded;
+            }
+        );
+
+        if (_appliedCaptureExclusion is not null)
         {
-            Logger.LogWarning(
-                $"Unable to set overlay capture exclusion (error {System.Runtime.InteropServices.Marshal.GetLastWin32Error()})."
-            );
+            _captureExclusionFailureLogged = false;
+        }
+        else if (!_captureExclusionFailureLogged)
+        {
+            _captureExclusionFailureLogged = true;
+            Logger.LogWarning($"Unable to set overlay capture exclusion (error {lastError}).");
         }
     }
 

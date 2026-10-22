@@ -65,7 +65,7 @@ internal static class HdrScreenCapture
     /// </summary>
     internal static readonly TimeSpan SessionIdleRelease = TimeSpan.FromSeconds(30);
 
-    private static readonly IdleRelease IdleSessionRelease = new(SessionIdleRelease, ReleaseIdleSessions);
+    private static readonly IdleRelease IdleSessionRelease = new(SessionIdleRelease, ReleaseIdleSessions, SyncLock);
 
     private sealed class OutputSession : IDisposable
     {
