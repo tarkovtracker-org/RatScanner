@@ -43,7 +43,7 @@ Root routing table: [`AGENTS.md`](../../AGENTS.md).
 4. Nested `src/App/AGENTS.md` and `tests/AGENTS.md` hold RatScanner-scoped rules. The `src/ScanEngine` submodule supplies RatEye's own `AGENTS.md`.
 5. Do not re-expand the root control plane into a subsystem dump.
 6. After structural doc changes, run `scripts/check-agent-docs.ps1` (also run in CI).
-7. After any `*.md` edit, run `scripts/lint-markdown.ps1 -Fix` (markdownlint-cli2; tables/fences/whitespace). CI enforces check mode; the optional hook checks without rewriting staged content.
+7. After any `*.md` edit, run `scripts/lint-markdown.ps1 -Fix` (markdownlint-cli; tables/fences/whitespace). CI enforces check mode; the optional hook checks without rewriting staged content.
 
 ## Drift policy
 

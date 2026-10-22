@@ -804,7 +804,7 @@ $requiredFiles = @(
     'scripts\lint-markdown.ps1',
     'package.json',
     'package-lock.json',
-    '.markdownlint-cli2.jsonc',
+    '.markdownlintignore',
     '.markdownlint.json',
     'src\App\RatScanner.csproj',
     'src\ScanEngine\RatEye\RatEye.csproj',
