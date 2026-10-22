@@ -110,7 +110,7 @@ VS Code defaults to CSharpier on save for C# (`.vscode/settings.json`).
 
 ### Markdown lint
 
-Authoritative tool: **markdownlint-cli2** via Node (dev-only `package.json`; not a product runtime dependency).
+Authoritative tool: **markdownlint-cli** via Node (dev-only `package.json`; not a product runtime dependency).
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lint-markdown.ps1
@@ -119,7 +119,7 @@ npm run lint:md
 npm run lint:md:fix
 ```
 
-Config: `.markdownlint-cli2.jsonc` (CLI globs/ignores) + `.markdownlint.json` (rule set for CLI and VS Code extension). Rules of note:
+Config: `.markdownlintignore` (CLI ignores) + `.markdownlint.json` (rule set for CLI and VS Code extension). Rules of note:
 
 - **Tables:** compact GFM style (MD055/MD060). Delimiter rows must be `| --- | --- |` (spaces around pipes), not `|---|---|` or `|--------|`. The pinned CLI in `package.json` auto-fixes this style; VS Code fix-on-save also applies once the file is open.
 - **Fenced code:** language tag required (MD040) — not always auto-fixed; use `text`, `bat`, `powershell`, etc.
