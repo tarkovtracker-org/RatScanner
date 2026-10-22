@@ -633,7 +633,19 @@ internal static class RatConfig
                 return false;
 
             GameDisplayConfiguration previous = GameDisplayConfiguration;
-            GameDisplayConfiguration detected = WindowsGameDisplayService.Detect(GetGameDisplayPreferences());
+            GameDisplayConfiguration detected = WindowsGameDisplayService.Detect(
+                GetGameDisplayPreferences(),
+                out bool gameWindowMinimized
+            );
+            if (!GameDisplayRefreshPolicy.ShouldApply(force, gameWindowMinimized))
+            {
+                // A minimized game reports no client area, so detection falls back to
+                // Graphics.ini or the monitor size. Keep the last real viewport instead of
+                // flipping to that fallback and back again when the game is restored.
+                _lastGameDisplayRefresh = now;
+                return false;
+            }
+
             viewportChanged =
                 previous.GameViewport != detected.GameViewport
                 || Math.Abs(previous.DisplayScale - detected.DisplayScale) > 0.001;

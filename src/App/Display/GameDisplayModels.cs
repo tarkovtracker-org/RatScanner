@@ -277,6 +277,26 @@ internal static class GameDisplaySelectionPolicy
     }
 }
 
+internal static class GameDisplayRefreshPolicy
+{
+    /// <summary>
+    /// Periodic (scan-path) refreshes keep the previous configuration while the game is
+    /// minimized; explicit refreshes from settings always apply what was detected.
+    /// </summary>
+    internal static bool ShouldApply(bool force, bool gameWindowMinimized) => force || !gameWindowMinimized;
+
+    /// <summary>
+    /// The engine only depends on the game viewport through its processing scale, so a
+    /// rebuild is needed exactly when the published engine's scale differs from the scale
+    /// for the current viewport. Comparing against the live engine (rather than a one-shot
+    /// "changed" flag) means a failed rebuild is retried on the next scan, and display-DPI
+    /// changes alone do not rebuild.
+    /// </summary>
+    internal static bool EngineScaleIsStale(float engineScale, Size gameViewport) =>
+        Math.Abs(engineScale - RatEye.Config.Processing.Resolution2Scale(gameViewport.Width, gameViewport.Height))
+        > 0.0001f;
+}
+
 internal static class GameDisplayConfigurationBuilder
 {
     internal static GameDisplayConfiguration Build(

@@ -17,10 +17,18 @@ internal static class WindowsGameDisplayService
 {
     private static readonly string[] TarkovProcessNames = ["EscapeFromTarkov", "EscapeFromTarkov_BE"];
 
-    internal static GameDisplayConfiguration Detect(GameDisplayPreferences preferences)
+    internal static GameDisplayConfiguration Detect(GameDisplayPreferences preferences) => Detect(preferences, out _);
+
+    /// <param name="gameWindowMinimized">
+    /// True when a Tarkov window exists but is minimized and no restored Tarkov window
+    /// was found. Its client rectangle is then meaningless, and the viewport falls back
+    /// to Graphics.ini or the monitor, which can differ from the real (windowed) size.
+    /// </param>
+    internal static GameDisplayConfiguration Detect(GameDisplayPreferences preferences, out bool gameWindowMinimized)
     {
         IReadOnlyList<GameDisplayInfo> displays = EnumerateDisplays();
-        Rectangle? gameClientBounds = TryGetTarkovClientBounds();
+        Rectangle? gameClientBounds = TryGetTarkovClientBounds(out bool sawMinimizedWindow);
+        gameWindowMinimized = sawMinimizedWindow && gameClientBounds is null;
         Size? graphicsViewport = GameGraphicsSettingsReader.TryReadViewport();
         return GameDisplayConfigurationBuilder.Build(displays, gameClientBounds, graphicsViewport, preferences);
     }
@@ -103,8 +111,9 @@ internal static class WindowsGameDisplayService
         return (1, false);
     }
 
-    private static Rectangle? TryGetTarkovClientBounds()
+    private static Rectangle? TryGetTarkovClientBounds(out bool sawMinimizedWindow)
     {
+        sawMinimizedWindow = false;
         Rectangle? largestBounds = null;
         foreach (string processName in TarkovProcessNames)
         {
@@ -128,6 +137,11 @@ internal static class WindowsGameDisplayService
                         nint handle = process.MainWindowHandle;
                         if (handle == 0 || !NativeMethods.IsWindowVisible(handle))
                             continue;
+                        if (NativeMethods.IsIconic(handle))
+                        {
+                            sawMinimizedWindow = true;
+                            continue;
+                        }
                         if (!TryGetPhysicalClientBounds(handle, out Rectangle bounds))
                             continue;
                         if (
@@ -250,6 +264,10 @@ internal static class WindowsGameDisplayService
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool IsWindowVisible(nint window);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool IsIconic(nint window);
     }
 }
 
