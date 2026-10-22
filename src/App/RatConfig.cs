@@ -75,12 +75,19 @@ internal static class RatConfig
         internal static Language Language = Language.English;
         internal static float ConfWarnThreshold = 0.85f;
 
-        // Minimum delay in milliseconds between accepted scans (applies to name
-        // scans, icon scans, and the shared ScanThrottle). This advanced value is
+        // Minimum delay in milliseconds between accepted scans of the same kind
+        // (name scans and icon scans each have their own throttle, so a plain click
+        // never swallows the Shift+click that follows it). This advanced value is
         // loaded once at startup; config-file edits take effect after restart.
         // Prevents hotkey spam from driving the OCR pipeline and overlay compositor
         // at full rate, which can otherwise peg GPU utilization.
         internal static int CooldownMs = 300;
+
+        // Name scans run on every left click. While the Windows cursor is hidden
+        // (in raid) there is no inspect window to read, so skip the capture instead
+        // of grabbing the game frame on every shot. Advanced config-file switch in
+        // case a setup renders its own cursor and hides the system one.
+        internal static bool SkipWhenCursorHidden = true;
 
         internal static int MarkerScanSize => (int)(50 * GameScale);
         internal static int TextWidth => (int)(600 * GameScale);
@@ -326,6 +333,10 @@ internal static class RatConfig
         NameScan.EnableAuto = config.ReadBool(nameof(NameScan.EnableAuto), NameScan.EnableAuto);
         NameScan.Language = (Language)config.ReadInt(nameof(NameScan.Language), (int)NameScan.Language);
         NameScan.CooldownMs = Math.Max(0, config.ReadInt(nameof(NameScan.CooldownMs), NameScan.CooldownMs));
+        NameScan.SkipWhenCursorHidden = config.ReadBool(
+            nameof(NameScan.SkipWhenCursorHidden),
+            NameScan.SkipWhenCursorHidden
+        );
 
         config.Section = nameof(IconScan);
         IconScan.Enable = config.ReadBool(nameof(IconScan.Enable), IconScan.Enable);
@@ -484,6 +495,7 @@ internal static class RatConfig
             config.WriteBool(nameof(NameScan.EnableAuto), NameScan.EnableAuto);
             config.WriteInt(nameof(NameScan.Language), (int)NameScan.Language);
             config.WriteInt(nameof(NameScan.CooldownMs), NameScan.CooldownMs);
+            config.WriteBool(nameof(NameScan.SkipWhenCursorHidden), NameScan.SkipWhenCursorHidden);
 
             config.Section = nameof(IconScan);
             config.WriteBool(nameof(IconScan.Enable), IconScan.Enable);

@@ -94,7 +94,8 @@ ones:
 | `window.fit_animation_started` | Content-fit animations begun |
 | `engine.rebuild_on_scan_path` | Engine rebuilds that happened inside a scan |
 | `engine.rebuild_skipped_unchanged_items` | Catalog refreshes that kept the engine because scan-relevant item fields were unchanged (price-only refresh) |
-| `scan.throttled` | Scans dropped by the cooldown |
+| `scan.throttled` | Scans dropped by the cooldown (name and icon scans have separate cooldowns) |
+| `scan.name_skipped_cursor_hidden` | Name-scan clicks skipped because the system cursor was hidden (in raid); `NameScan.SkipWhenCursorHidden` in `config.cfg` turns this off |
 
 ## Adding a stage
 

@@ -243,6 +243,30 @@ public sealed class ConfigurationMigrationTests
     }
 
     [Fact]
+    public void Name_scan_hidden_cursor_switch_defaults_on_and_can_be_disabled_in_config()
+    {
+        string root = CreateTemporaryDirectory();
+        try
+        {
+            string configPath = Path.Combine(root, "config.cfg");
+            SimpleConfig config = new(configPath, "Other");
+            config.WriteInt("ConfigVersion", 4);
+            RatConfig.LoadConfig(configPath);
+            Assert.True(RatConfig.NameScan.SkipWhenCursorHidden);
+
+            config.Section = "NameScan";
+            config.WriteBool("SkipWhenCursorHidden", false);
+            RatConfig.LoadConfig(configPath);
+            Assert.False(RatConfig.NameScan.SkipWhenCursorHidden);
+        }
+        finally
+        {
+            RatConfig.NameScan.SkipWhenCursorHidden = true;
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Overlay_capture_exclusion_defaults_on_and_can_be_disabled_in_config()
     {
         string root = CreateTemporaryDirectory();
