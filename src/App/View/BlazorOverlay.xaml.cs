@@ -24,6 +24,7 @@ public partial class BlazorOverlay : Window
     private readonly MenuVM _menuViewModel;
     private bool _webViewReady;
     private bool _closing;
+    private bool? _appliedCaptureExclusion;
 
     public BlazorOverlay(ServiceProvider serviceProvider)
     {
@@ -129,14 +130,15 @@ public partial class BlazorOverlay : Window
         ApplyCaptureExclusion(handle);
     }
 
-    private static void ApplyCaptureExclusion(nint handle)
+    private void ApplyCaptureExclusion(nint handle)
     {
         // Keep our own tooltip out of the next scan's screenshot (see
         // RatConfig.ToolTip.ExcludeFromCapture). Requires Windows 10 2004+; on failure
-        // the overlay simply stays capturable, as before.
-        uint affinity = RatConfig.ToolTip.ExcludeFromCapture
-            ? OverlayNativeMethods.WdaExcludeFromCapture
-            : OverlayNativeMethods.WdaNone;
+        // the overlay simply stays capturable, as before. The requested value is
+        // remembered even on failure so an unsupported OS does not retry on every tooltip.
+        bool exclude = RatConfig.ToolTip.ExcludeFromCapture;
+        _appliedCaptureExclusion = exclude;
+        uint affinity = exclude ? OverlayNativeMethods.WdaExcludeFromCapture : OverlayNativeMethods.WdaNone;
         if (!OverlayNativeMethods.SetWindowDisplayAffinity(handle, affinity))
         {
             Logger.LogWarning(
@@ -247,6 +249,9 @@ public partial class BlazorOverlay : Window
             // tooltip mode and already received virtual-screen bounds.
             if (!Topmost)
                 SetSize();
+            // Pick up a Settings change before the tooltip becomes visible to capture.
+            if (_appliedCaptureExclusion != RatConfig.ToolTip.ExcludeFromCapture)
+                ApplyCaptureExclusion(new WindowInteropHelper(this).Handle);
             Topmost = true;
             if (!IsVisible)
             {

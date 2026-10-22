@@ -90,6 +90,10 @@
                                     ValueChanged="@(_ => StateHasChanged())"
                                     Label="@Localizer["AlwaysOnTop"]"
                                     Persist="SettingsVM.SetAlwaysOnTopAsync" />
+            <ImmediateSettingSwitch Value="@RatConfig.ToolTip.ExcludeFromCapture"
+                                    ValueChanged="@(_ => StateHasChanged())"
+                                    Label="@Localizer["HideTooltipsFromCapture"]"
+                                    Persist="SettingsVM.SetExcludeTooltipFromCaptureAsync" />
         </section>
     </aside>
 </div>

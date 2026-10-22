@@ -56,6 +56,43 @@ public sealed class ApplicationBoundaryTests
     }
 
     [Fact]
+    public async Task Tooltip_capture_exclusion_can_be_turned_off_and_back_on_from_settings()
+    {
+        bool original = RatConfig.ToolTip.ExcludeFromCapture;
+        int persisted = 0;
+        using SettingsPersistenceService persistence = new(_ =>
+        {
+            persisted++;
+            return Task.CompletedTask;
+        });
+        using SettingsVM settings = new(
+            new LocalizationService(),
+            persistence,
+            new FakeScanOrchestrator(),
+            new FakeTrackerService(),
+            new FakeHotkeyRegistrar()
+        );
+
+        try
+        {
+            RatConfig.ToolTip.ExcludeFromCapture = true;
+
+            SettingSaveResult offResult = await settings.SetExcludeTooltipFromCaptureAsync(false);
+            Assert.True(offResult.Succeeded);
+            Assert.False(RatConfig.ToolTip.ExcludeFromCapture);
+
+            SettingSaveResult onResult = await settings.SetExcludeTooltipFromCaptureAsync(true);
+            Assert.True(onResult.Succeeded);
+            Assert.True(RatConfig.ToolTip.ExcludeFromCapture);
+            Assert.Equal(2, persisted);
+        }
+        finally
+        {
+            RatConfig.ToolTip.ExcludeFromCapture = original;
+        }
+    }
+
+    [Fact]
     public void Menu_view_model_forwards_scan_changes_from_injected_orchestrator()
     {
         FakeScanOrchestrator scans = new();

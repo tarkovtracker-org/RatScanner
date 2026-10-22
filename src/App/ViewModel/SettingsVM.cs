@@ -301,6 +301,16 @@ internal class SettingsVM : INotifyPropertyChanged, IDisposable
             static v => v is 0 or 500 or 1500 or 3000 ? null : "Unsupported tooltip delay."
         );
 
+    // BlazorOverlay re-reads this before showing the next tooltip, so no runtime hook is needed.
+    internal Task<SettingSaveResult> SetExcludeTooltipFromCaptureAsync(bool value) =>
+        SaveAsync(
+            nameof(RatConfig.ToolTip.ExcludeFromCapture),
+            "tooltip capture exclusion",
+            value,
+            () => RatConfig.ToolTip.ExcludeFromCapture,
+            v => RatConfig.ToolTip.ExcludeFromCapture = v
+        );
+
     internal Task<SettingSaveResult> SetAlwaysOnTopAsync(bool value) =>
         SaveAsync(
             nameof(RatConfig.AlwaysOnTop),

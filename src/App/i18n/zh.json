@@ -228,6 +228,7 @@
   "TooltipShort": "短 · 0.5 秒",
   "TooltipNormal": "正常 · 1.5 秒",
   "TooltipLong": "长 · 3 秒",
+  "HideTooltipsFromCapture": "在截图和录屏中隐藏提示",
   "DiagnosticsSection": "诊断",
   "DiagnosticsDescription": "用于故障排除的技术日志。正常使用时请保持关闭。",
   "ExportScanDiagnostics": "导出扫描诊断",
