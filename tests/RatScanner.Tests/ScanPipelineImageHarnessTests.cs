@@ -246,9 +246,22 @@ public class ScanPipelineImageHarnessTests
         }
 
         Stopwatch rebuild = Stopwatch.StartNew();
-        using RatEyeEngine second = CreateEngine(highlighted: true, useCache: true);
-        rebuild.Stop();
-        double afterRebuild = ScanOnce(second);
+        double afterRebuild;
+        using (RatEyeEngine second = CreateEngine(highlighted: true, useCache: true))
+        {
+            rebuild.Stop();
+            afterRebuild = ScanOnce(second);
+        }
+
+        // What the app now does after every publish: warm the common slot sizes off
+        // the scan path, so the user's first scan finds templates already loaded.
+        Assert.True(TarkovDevAPI.TryGetCachedItems(out TarkovItem[] catalog));
+        using RatEyeEngine warmed = CreateEngine(highlighted: true, useCache: true);
+        Stopwatch warmUp = Stopwatch.StartNew();
+        foreach (RatEye.Vector2 size in RatScannerMain.IconWarmUpSlotSizes(catalog))
+            warmed.WarmUpIconTemplates(size);
+        warmUp.Stop();
+        double afterWarmUp = ScanOnce(warmed);
 
         Array.Sort(warm);
         double warmP50 = warm[warm.Length / 2];
@@ -258,6 +271,8 @@ public class ScanPipelineImageHarnessTests
         _output.WriteLine($"icon.warm_p50_ms={warmP50:F1} icon.warm_max_ms={warmMax:F1}");
         _output.WriteLine($"engine.rebuild_ms={rebuild.Elapsed.TotalMilliseconds:F1}");
         _output.WriteLine($"icon.first_after_rebuild_ms={afterRebuild:F1}");
+        _output.WriteLine($"engine.icon_warmup_ms={warmUp.Elapsed.TotalMilliseconds:F1} (background)");
+        _output.WriteLine($"icon.first_after_warmup_ms={afterWarmUp:F1}");
 
         string? outputDirectory = Environment.GetEnvironmentVariable("RATSCANNER_BENCH_OUT");
         if (!string.IsNullOrWhiteSpace(outputDirectory))
@@ -275,6 +290,8 @@ public class ScanPipelineImageHarnessTests
                     IconWarmMaxMs = warmMax,
                     EngineRebuildMs = rebuild.Elapsed.TotalMilliseconds,
                     IconFirstAfterRebuildMs = afterRebuild,
+                    IconWarmUpMs = warmUp.Elapsed.TotalMilliseconds,
+                    IconFirstAfterWarmUpMs = afterWarmUp,
                 },
                 Formatting.Indented
             );
