@@ -58,6 +58,15 @@ internal static class HdrScreenCapture
     private static IDXGIFactory1? _factory;
     private static readonly List<OutputSession> Sessions = [];
 
+    /// <summary>
+    /// An active desktop duplication makes DWM copy every presented frame (constant GPU
+    /// work) and can keep the game out of independent flip, even while no scan runs.
+    /// Release the sessions after a quiet period; the next HDR scan recreates them.
+    /// </summary>
+    internal static readonly TimeSpan SessionIdleRelease = TimeSpan.FromSeconds(30);
+
+    private static readonly IdleRelease IdleSessionRelease = new(SessionIdleRelease, ReleaseIdleSessions, SyncLock);
+
     private sealed class OutputSession : IDisposable
     {
         public ID3D11Device? Device;
@@ -153,6 +162,7 @@ internal static class HdrScreenCapture
 
         lock (SyncLock)
         {
+            IdleSessionRelease.Touch();
             try
             {
                 EnsureSessions();
@@ -247,6 +257,17 @@ internal static class HdrScreenCapture
             }
         }
         return true;
+    }
+
+    private static void ReleaseIdleSessions()
+    {
+        lock (SyncLock)
+        {
+            if (Sessions.Count == 0)
+                return;
+            Logger.LogDebug("Releasing idle HDR desktop duplication sessions.");
+            ResetSessions();
+        }
     }
 
     /// <summary>Forces session teardown; used by diagnostics, shutdown, and tests.</summary>

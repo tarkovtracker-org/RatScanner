@@ -45,6 +45,10 @@ public sealed class WebViewSmokeTests
             await page.WaitForURLAsync("**/app/settings/general");
             await AssertVisibleAsync(page.Locator(".settings-page"));
             Assert.NotEqual("BODY", await page.EvaluateAsync<string>("document.activeElement?.tagName ?? ''"));
+            // Capture exclusion hides tooltips from OBS and screenshots; users must be able to find the switch.
+            await AssertVisibleAsync(
+                page.GetByLabel("Hide tooltips from screenshots and recordings", new() { Exact = true })
+            );
 
             await page.Locator("a[href='/app/settings/tracking']").ClickAsync();
             await page.WaitForURLAsync("**/app/settings/tracking");

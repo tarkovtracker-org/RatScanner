@@ -228,6 +228,7 @@
   "TooltipShort": "Corto · 0,5 segundos",
   "TooltipNormal": "Normal · 1,5 segundos",
   "TooltipLong": "Largo · 3 segundos",
+  "HideTooltipsFromCapture": "Ocultar los tooltips en capturas de pantalla y grabaciones",
   "DiagnosticsSection": "Diagnósticos",
   "DiagnosticsDescription": "Registro técnico para solución de problemas. Mantenga esto desactivado durante el uso normal.",
   "ExportScanDiagnostics": "Exportar diagnósticos del escaneo",

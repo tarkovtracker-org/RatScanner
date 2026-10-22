@@ -228,6 +228,7 @@
   "TooltipShort": "Krótkie · 0,5 sekundy",
   "TooltipNormal": "Normalne · 1,5 sekundy",
   "TooltipLong": "Długie · 3 sekundy",
+  "HideTooltipsFromCapture": "Ukryj podpowiedzi na zrzutach ekranu i nagraniach",
   "DiagnosticsSection": "Diagnostyka",
   "DiagnosticsDescription": "Rejestrowanie techniczne do rozwiązywania problemów. Pozostaw wyłączone podczas normalnego użytkowania.",
   "ExportScanDiagnostics": "Eksportuj diagnostykę skanowania",

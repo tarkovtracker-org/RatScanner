@@ -228,6 +228,7 @@
   "TooltipShort": "Court · 0,5 secondes",
   "TooltipNormal": "Normal · 1,5 secondes",
   "TooltipLong": "Long · 3 secondes",
+  "HideTooltipsFromCapture": "Masquer les info-bulles dans les captures d'écran et enregistrements",
   "DiagnosticsSection": "Diagnostics",
   "DiagnosticsDescription": "Journalisation technique pour le dépannage. Laissez cette option désactivée en utilisation normale.",
   "ExportScanDiagnostics": "Exporter les diagnostics d'analyse",
