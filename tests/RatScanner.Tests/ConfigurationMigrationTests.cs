@@ -267,6 +267,30 @@ public sealed class ConfigurationMigrationTests
     }
 
     [Fact]
+    public void Overlay_capture_exclusion_defaults_on_and_can_be_disabled_in_config()
+    {
+        string root = CreateTemporaryDirectory();
+        try
+        {
+            string configPath = Path.Combine(root, "config.cfg");
+            SimpleConfig config = new(configPath, "Other");
+            config.WriteInt("ConfigVersion", 4);
+            RatConfig.LoadConfig(configPath);
+            Assert.True(RatConfig.ToolTip.ExcludeFromCapture);
+
+            config.Section = "ToolTip";
+            config.WriteBool("ExcludeFromCapture", false);
+            RatConfig.LoadConfig(configPath);
+            Assert.False(RatConfig.ToolTip.ExcludeFromCapture);
+        }
+        finally
+        {
+            RatConfig.ToolTip.ExcludeFromCapture = true;
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Save_and_reload_preserve_seasonal_mode_and_token()
     {
         string root = CreateTemporaryDirectory();

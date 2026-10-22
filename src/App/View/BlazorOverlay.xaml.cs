@@ -24,6 +24,8 @@ public partial class BlazorOverlay : Window
     private readonly MenuVM _menuViewModel;
     private bool _webViewReady;
     private bool _closing;
+    private bool? _appliedCaptureExclusion;
+    private bool _captureExclusionFailureLogged;
 
     public BlazorOverlay(ServiceProvider serviceProvider)
     {
@@ -125,6 +127,36 @@ public partial class BlazorOverlay : Window
         // hit-test transparency on the top-level window alone does not cover
         // them. Apply click-through to every descendant as well.
         ApplyStyleToDescendants(handle);
+
+        ApplyCaptureExclusion(handle);
+    }
+
+    private void ApplyCaptureExclusion(nint handle)
+    {
+        // Keep our own tooltip out of the next scan's screenshot (see
+        // RatConfig.ToolTip.ExcludeFromCapture). On failure the overlay stays capturable,
+        // as before, and the next tooltip retries; unsupported Windows versions are skipped.
+        int lastError = 0;
+        _appliedCaptureExclusion = OverlayCaptureExclusion.Apply(
+            RatConfig.ToolTip.ExcludeFromCapture,
+            OverlayCaptureExclusion.IsSupported,
+            affinity =>
+            {
+                bool succeeded = OverlayNativeMethods.SetWindowDisplayAffinity(handle, affinity);
+                lastError = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                return succeeded;
+            }
+        );
+
+        if (_appliedCaptureExclusion is not null)
+        {
+            _captureExclusionFailureLogged = false;
+        }
+        else if (!_captureExclusionFailureLogged)
+        {
+            _captureExclusionFailureLogged = true;
+            Logger.LogWarning($"Unable to set overlay capture exclusion (error {lastError}).");
+        }
     }
 
     private static void ApplyStyleToDescendants(nint parent)
@@ -229,6 +261,9 @@ public partial class BlazorOverlay : Window
             // tooltip mode and already received virtual-screen bounds.
             if (!Topmost)
                 SetSize();
+            // Pick up a Settings change before the tooltip becomes visible to capture.
+            if (_appliedCaptureExclusion != RatConfig.ToolTip.ExcludeFromCapture)
+                ApplyCaptureExclusion(new WindowInteropHelper(this).Handle);
             Topmost = true;
             if (!IsVisible)
             {

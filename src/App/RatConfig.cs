@@ -115,6 +115,14 @@ internal static class RatConfig
     {
         internal static string DigitGroupingSymbol = ",";
         internal static int Duration = 1500;
+
+        // Screen captures (GDI and desktop duplication alike) include the composited
+        // overlay, so a tooltip still showing from the previous scan was read back into
+        // the next capture, on top of the very item being re-scanned. Excluding the
+        // overlay window from capture keeps scans clean; it also hides tooltips from
+        // screenshots and display/window capture in streaming tools. Advanced
+        // config-file switch.
+        internal static bool ExcludeFromCapture = true;
     }
 
     // Capture options
@@ -338,6 +346,7 @@ internal static class RatConfig
 
         config.Section = nameof(ToolTip);
         ToolTip.Duration = config.ReadInt(nameof(ToolTip.Duration), ToolTip.Duration);
+        ToolTip.ExcludeFromCapture = config.ReadBool(nameof(ToolTip.ExcludeFromCapture), ToolTip.ExcludeFromCapture);
         ToolTip.DigitGroupingSymbol = config.ReadString(
             nameof(ToolTip.DigitGroupingSymbol),
             ToolTip.DigitGroupingSymbol
@@ -496,6 +505,7 @@ internal static class RatConfig
 
             config.Section = nameof(ToolTip);
             config.WriteInt(nameof(ToolTip.Duration), ToolTip.Duration);
+            config.WriteBool(nameof(ToolTip.ExcludeFromCapture), ToolTip.ExcludeFromCapture);
             config.WriteString(nameof(ToolTip.DigitGroupingSymbol), ToolTip.DigitGroupingSymbol);
 
             config.Section = nameof(HdrCapture);
