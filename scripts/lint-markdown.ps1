@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Lint or auto-fix Markdown files with markdownlint-cli2.
+  Lint or auto-fix Markdown files with markdownlint-cli.
 
 .DESCRIPTION
   Mirrors the CSharpier workflow for Markdown:
@@ -45,7 +45,7 @@ if (-not (Test-CommandExists 'npm')) {
     exit 1
 }
 
-$nodeModulesCli = Join-Path $RepoRoot 'node_modules\markdownlint-cli2\markdownlint-cli2-bin.mjs'
+$nodeModulesCli = Join-Path $RepoRoot 'node_modules\markdownlint-cli\markdownlint.js'
 $packageLock = Join-Path $RepoRoot 'package-lock.json'
 $packageJson = Join-Path $RepoRoot 'package.json'
 

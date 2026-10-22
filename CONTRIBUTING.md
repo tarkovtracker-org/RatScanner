@@ -40,7 +40,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-agent-docs.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lint-markdown.ps1 -Fix
 ```
 
-Markdown style is enforced by **markdownlint-cli2** (Node). After editing any `*.md`, run the lint script with `-Fix` (or `npm run lint:md:fix`). CI runs the same lint in check mode. Optional local pre-commit: `scripts\install-git-hooks.ps1`.
+Markdown style is enforced by **markdownlint-cli** (Node). After editing any `*.md`, run the lint script with `-Fix` (or `npm run lint:md:fix`). CI runs the same lint in check mode. Optional local pre-commit: `scripts\install-git-hooks.ps1`.
 
 Do **not** use `publish.bat` for everyday coding. Details: `docs/agent-context/local-development.md` and root `README.md`.
 

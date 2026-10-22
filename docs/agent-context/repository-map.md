@@ -125,10 +125,10 @@ examples/                # Sample resolution screenshots
 | `scripts/check-analyzer-gate.ps1` | Enforce parity between curated analyzer severities and build errors (also CI) |
 | `scripts/check-agent-docs.ps1` | Structural documentation integrity (also CI) |
 | `scripts/test-agent-docs.ps1` | Disposable adversarial regression fixture for the integrity check (also CI) |
-| `scripts/lint-markdown.ps1` | markdownlint-cli2 check / `-Fix` auto-fix (also CI check) |
+| `scripts/lint-markdown.ps1` | markdownlint-cli check / `-Fix` auto-fix (also CI check) |
 | `scripts/install-git-hooks.ps1` | Optional local pre-commit Markdown check (no mutation/re-staging) |
 | `scripts/verify.ps1` | Canonical Fast, Full, and WebView UI verification pipelines |
-| `package.json` / `.markdownlint-cli2.jsonc` | Dev-only Node markdownlint tooling (not app runtime) |
+| `package.json` / `.markdownlintignore` | Dev-only Node markdownlint tooling (not app runtime) |
 | `publish.bat` | Local release package |
 | `scripts/bench/*` | Optional perf measurements (not product path) |
 
