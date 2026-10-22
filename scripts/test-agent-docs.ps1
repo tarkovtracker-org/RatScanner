@@ -98,7 +98,7 @@ try {
         'dotnet-tools.json',
         'Directory.Build.targets',
         '.csharpierrc.json',
-        '.markdownlint-cli2.jsonc',
+        '.markdownlintignore',
         '.markdownlint.json',
         'package.json',
         'package-lock.json',
