@@ -3,7 +3,7 @@
   Install an optional local pre-commit Markdown check.
 
 .DESCRIPTION
-  Writes a pre-commit hook that runs markdownlint-cli2 when Markdown is staged.
+  Writes a pre-commit hook that runs markdownlint-cli when Markdown is staged.
   The hook never rewrites or re-stages working-tree content. Non-Markdown commits
   are unaffected. The hook is local-only (not committed under .git/hooks).
 
@@ -31,7 +31,7 @@ $hookPath = Join-Path $hooksDir 'pre-commit'
 $hookBody = @'
 #!/bin/sh
 # Auto-installed by scripts/install-git-hooks.ps1
-# Check Markdown with markdownlint-cli2 when at least one Markdown file is staged.
+# Check Markdown with markdownlint-cli when at least one Markdown file is staged.
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$REPO_ROOT" || exit 0
@@ -45,7 +45,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f node_modules/markdownlint-cli2/markdownlint-cli2-bin.mjs ]; then
+if [ ! -f node_modules/markdownlint-cli/markdownlint.js ]; then
   if [ -f package-lock.json ]; then
     npm ci --no-fund --no-audit || exit $?
   else
@@ -53,8 +53,8 @@ if [ ! -f node_modules/markdownlint-cli2/markdownlint-cli2-bin.mjs ]; then
   fi
 fi
 
-if [ ! -f node_modules/markdownlint-cli2/markdownlint-cli2-bin.mjs ]; then
-  echo "pre-commit: markdownlint-cli2 is unavailable after npm install." >&2
+if [ ! -f node_modules/markdownlint-cli/markdownlint.js ]; then
+  echo "pre-commit: markdownlint-cli is unavailable after npm install." >&2
   exit 1
 fi
 

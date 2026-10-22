@@ -104,7 +104,7 @@ Do not expand into subjective rewrites or unrelated features. Defer only for a c
 - Do not paste version numbers, exhaustive file lists that will rot, or aspirational roadmaps into agent docs.
 - Nested `AGENTS.md` hold path-scoped mandatory rules; context docs hold explanation.
 - Run `scripts\check-agent-docs.ps1` after structural doc or packaging-reference changes.
-- **Markdown style (mandatory after any `*.md` change):** run `scripts\lint-markdown.ps1 -Fix` (or `npm run lint:md:fix`). Config: `.markdownlint.json` + `.markdownlint-cli2.jsonc`. Prefer compact GFM tables (`| a | b |` with delimiter `| --- | --- |` — spaces around pipes). Fenced blocks need a language (` ```bat `, ` ```text `). Line length is **not** enforced. Optional local git hook: `scripts\install-git-hooks.ps1`.
+- **Markdown style (mandatory after any `*.md` change):** run `scripts\lint-markdown.ps1 -Fix` (or `npm run lint:md:fix`). Config: `.markdownlint.json` + `.markdownlintignore`. Prefer compact GFM tables (`| a | b |` with delimiter `| --- | --- |` — spaces around pipes). Fenced blocks need a language (` ```bat `, ` ```text `). Line length is **not** enforced. Optional local git hook: `scripts\install-git-hooks.ps1`.
 
 ## Context routing (read before material changes)
 
