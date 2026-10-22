@@ -1,7 +1,9 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Input;
 using RatEye;
 
@@ -171,7 +173,105 @@ internal static class UserActivityHelper
     [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
     private static extern nint CallNextHookEx(nint idHook, int nCode, nint wParam, nint lParam);
 
+    [DllImport("user32.dll")]
+    private static extern int GetMessage(out NativeMessage message, nint window, uint filterMin, uint filterMax);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostThreadMessage(uint threadId, uint message, nint wParam, nint lParam);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PeekMessage(
+        out NativeMessage message,
+        nint window,
+        uint filterMin,
+        uint filterMax,
+        uint removeMessage
+    );
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMessage
+    {
+        public nint Window;
+        public uint Message;
+        public nint WParam;
+        public nint LParam;
+        public uint Time;
+        public Win32Point Point;
+        public uint Private;
+    }
+
+    private static readonly object HookThreadLock = new();
+    private static Thread? _hookThread;
+    private static uint _hookThreadId;
+
+    /// <summary>
+    /// Installs the low-level hooks on a dedicated thread with its own message loop.
+    /// </summary>
+    /// <remarks>
+    /// Low-level hooks are called on the thread that installed them, and every mouse
+    /// event on the whole system (including in-game movement) waits for that thread.
+    /// Installing them on the WPF UI thread made input everywhere wait behind UI work
+    /// such as WebView layout or a synchronous engine rebuild; Windows can also silently
+    /// remove a hook that misses LowLevelHooksTimeout. Subscribers therefore run on the
+    /// hook thread and must marshal UI work themselves.
+    /// </remarks>
     internal static void Start(bool installMouseHook, bool installKeyboardHook)
+    {
+        lock (HookThreadLock)
+        {
+            if (_hookThread is not null)
+                return;
+
+            ExceptionDispatchInfo? startupFailure = null;
+            using ManualResetEventSlim started = new();
+            Thread thread = new(() =>
+            {
+                try
+                {
+                    StartOnCurrentThread(installMouseHook, installKeyboardHook);
+                    // Create the message queue now so Stop can always post WM_QUIT.
+                    _ = PeekMessage(out _, 0, (uint)WM.USER, (uint)WM.USER, 0);
+                    _hookThreadId = GetCurrentThreadId();
+                }
+                catch (Exception exception)
+                {
+                    startupFailure = ExceptionDispatchInfo.Capture(exception);
+                    return;
+                }
+                finally
+                {
+                    started.Set();
+                }
+
+                try
+                {
+                    // Pump until Stop posts WM_QUIT (0) or GetMessage fails (-1).
+                    while (GetMessage(out _, 0, 0, 0) > 0) { }
+                }
+                finally
+                {
+                    StopOnCurrentThread(true, true, false);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "RatScanner input hooks",
+                // Every system-wide mouse event waits for this thread.
+                Priority = ThreadPriority.AboveNormal,
+            };
+            thread.Start();
+            started.Wait();
+            startupFailure?.Throw();
+            _hookThread = thread;
+        }
+    }
+
+    private static void StartOnCurrentThread(bool installMouseHook, bool installKeyboardHook)
     {
         bool mouseHookInstalledHere = false;
 
@@ -192,7 +292,7 @@ internal static class UserActivityHelper
             {
                 int errorCode = Marshal.GetLastWin32Error();
                 // Do cleanup
-                Stop(true, false, false);
+                StopOnCurrentThread(true, false, false);
                 ThrowLastWin32Error(errorCode);
             }
 
@@ -217,10 +317,30 @@ internal static class UserActivityHelper
                 int errorCode = Marshal.GetLastWin32Error();
                 // Roll back the mouse hook if this call installed it, so a partial failure
                 // leaves the hook state as it was before Start was called.
-                Stop(mouseHookInstalledHere, true, false);
+                StopOnCurrentThread(mouseHookInstalledHere, true, false);
                 ThrowLastWin32Error(errorCode);
             }
         }
+    }
+
+    /// <summary>
+    /// Stops the hook thread, which uninstalls both hooks before it exits.
+    /// </summary>
+    internal static void Stop()
+    {
+        Thread? thread;
+        lock (HookThreadLock)
+        {
+            thread = _hookThread;
+            if (thread is null)
+                return;
+            _hookThread = null;
+            if (!PostThreadMessage(_hookThreadId, (uint)WM.QUIT, 0, 0))
+                Logger.LogWarning($"Unable to stop the input hook thread (error {Marshal.GetLastWin32Error()}).");
+        }
+
+        if (thread != Thread.CurrentThread && !thread.Join(TimeSpan.FromSeconds(2)))
+            Logger.LogWarning("The input hook thread did not exit within 2 s.");
     }
 
     /// <summary>
@@ -230,7 +350,7 @@ internal static class UserActivityHelper
     /// <param name="uninstallKeyboardHook"><b>true</b> if keyboard hook must be uninstalled</param>
     /// <param name="throwExceptions"><b>true</b> if exceptions which occurred during uninstalling must be thrown</param>
     /// <exception cref="Win32Exception">Any windows problem.</exception>
-    internal static void Stop(bool uninstallMouseHook, bool uninstallKeyboardHook, bool throwExceptions)
+    private static void StopOnCurrentThread(bool uninstallMouseHook, bool uninstallKeyboardHook, bool throwExceptions)
     {
         // If mouse hook set and must be uninstalled
         if (hMouseHook != 0 && uninstallMouseHook)
@@ -299,7 +419,7 @@ internal static class UserActivityHelper
         // Raise OnKeyboardKeyUp or OnKeyboardKeyDown event
         if (OnKeyboardKeyUp != null && ((WM)wParam == WM.KEYUP || (WM)wParam == WM.SYSKEYUP))
         {
-            KeyUpEventArgs eventArgs = new((int)keyboardHookStruct.vkCode, Device.Keyboard);
+            KeyUpEventArgs eventArgs = new((int)keyboardHookStruct.vkCode, Device.Keyboard, GetMousePosition());
             try
             {
                 OnKeyboardKeyUp(null, eventArgs);
@@ -312,7 +432,7 @@ internal static class UserActivityHelper
         }
         else if (OnKeyboardKeyDown != null && ((WM)wParam == WM.KEYDOWN || (WM)wParam == WM.SYSKEYDOWN))
         {
-            KeyDownEventArgs eventArgs = new((int)keyboardHookStruct.vkCode, Device.Keyboard);
+            KeyDownEventArgs eventArgs = new((int)keyboardHookStruct.vkCode, Device.Keyboard, GetMousePosition());
             try
             {
                 OnKeyboardKeyDown(null, eventArgs);
@@ -340,6 +460,10 @@ internal static class UserActivityHelper
 
         // Read structure MouseLLHookStruct at lParam
         int virtualKeycode = 0;
+        MouseLLHookStruct mouseHookStruct = Marshal.PtrToStructure<MouseLLHookStruct>(lParam)!;
+        // Physical screen position of this click, captured now: handlers run later on
+        // the thread pool, by which time the cursor may have moved.
+        Vector2 cursorPosition = new(mouseHookStruct.pt.X, mouseHookStruct.pt.Y);
 
         bool up = (WM)wParam switch
         {
@@ -366,7 +490,6 @@ internal static class UserActivityHelper
                 break;
             case WM.XBUTTONUP:
             case WM.XBUTTONDOWN:
-                MouseLLHookStruct mouseHookStruct = Marshal.PtrToStructure<MouseLLHookStruct>(lParam)!;
                 if (mouseHookStruct.mouseData == 0x10000)
                     virtualKeycode = 0x05;
                 else if (mouseHookStruct.mouseData == 0x20000)
@@ -390,7 +513,7 @@ internal static class UserActivityHelper
 
         if (up && OnMouseButtonUp != null)
         {
-            KeyUpEventArgs eventArgs = new(virtualKeycode, Device.Mouse);
+            KeyUpEventArgs eventArgs = new(virtualKeycode, Device.Mouse, cursorPosition);
             try
             {
                 OnMouseButtonUp(null, eventArgs);
@@ -406,7 +529,7 @@ internal static class UserActivityHelper
         }
         else if (!up && OnMouseButtonDown != null)
         {
-            KeyDownEventArgs eventArgs = new(virtualKeycode, Device.Mouse);
+            KeyDownEventArgs eventArgs = new(virtualKeycode, Device.Mouse, cursorPosition);
             try
             {
                 OnMouseButtonDown(null, eventArgs);
@@ -720,10 +843,17 @@ internal class KeyUpEventArgs : EventArgs
     /// </summary>
     internal readonly double HookObservedAtMs = Diagnostics.PerfTrace.MonotonicMs();
 
-    internal KeyUpEventArgs(int vkCode, Device device)
+    /// <summary>
+    /// Physical cursor position when the hook observed the event. Scans must use this
+    /// rather than reading the cursor when the handler finally runs.
+    /// </summary>
+    internal readonly Vector2 CursorPosition;
+
+    internal KeyUpEventArgs(int vkCode, Device device, Vector2 cursorPosition)
     {
         VKCode = vkCode;
         Device = device;
+        CursorPosition = cursorPosition;
     }
 }
 
@@ -739,10 +869,13 @@ internal class KeyDownEventArgs : EventArgs
 
     internal Device Device;
 
-    internal KeyDownEventArgs(int vkCode, Device device)
+    internal readonly Vector2 CursorPosition;
+
+    internal KeyDownEventArgs(int vkCode, Device device, Vector2 cursorPosition)
     {
         VKCode = vkCode;
         Device = device;
+        CursorPosition = cursorPosition;
     }
 }
 
