@@ -87,6 +87,13 @@ flowchart TD
 
 ## Scan data flow
 
+Low-level keyboard and mouse hooks run on a dedicated background thread with its
+own Win32 message loop, rather than the WPF dispatcher. Shutdown posts `WM_QUIT`
+and waits up to two seconds for unhooking. Hook subscribers must marshal UI work
+to their dispatcher; `HotkeySelector` uses the Blazor renderer. Scan hotkeys carry
+the physical cursor position observed by the hook so delayed handlers do not
+capture a later cursor location.
+
 1. Hotkey / auto path → `RatScannerMain.NameScan` / `IconScan` / `NameScanScreen`.
 2. `GetScreenshot` captures a region using game display configuration.
 3. Locks: name scan lock order 0, icon scan lock order 1 (documented on locks).

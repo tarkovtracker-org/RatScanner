@@ -86,21 +86,27 @@
         UserActivityHelper.OnMouseButtonDown += OnKeyDown;
     }
 
+    // Input hooks run on their own thread; all component state is touched on the
+    // renderer's dispatcher, in event order.
     private void OnKeyUp(object? sender, KeyUpEventArgs e) {
-        _ = StopListeningAsync();
+        _ = InvokeAsync(() => StopListeningAsync());
     }
 
     private void OnKeyDown(object? sender, KeyDownEventArgs e) {
-        if (!_listening) return;
+        int vkCode = e.VKCode;
+        Device device = e.Device;
+        _ = InvokeAsync(() => {
+            if (!_listening) return Task.CompletedTask;
 
-        if (e.Device == Device.Keyboard && e.Key == Key.Escape) {
-            _ = StopListeningAsync(true);
-            return;
-        }
+            if (device == Device.Keyboard && KeyInterop.KeyFromVirtualKey(vkCode) == Key.Escape) {
+                return StopListeningAsync(true);
+            }
 
-        if (e.Device == Device.Keyboard) _tmpHotkey.KeyboardKeys.Add(e.Key);
-        else if (e.Device == Device.Mouse) _tmpHotkey.MouseButtons.Add(e.MouseButton);
-        _ = InvokeAsync(StateHasChanged);
+            if (device == Device.Keyboard) _tmpHotkey.KeyboardKeys.Add(KeyInterop.KeyFromVirtualKey(vkCode));
+            else if (device == Device.Mouse) _tmpHotkey.MouseButtons.Add(UserActivityHelper.VKeyToMouseButton(vkCode));
+            StateHasChanged();
+            return Task.CompletedTask;
+        });
     }
 
     public void Dispose() {
