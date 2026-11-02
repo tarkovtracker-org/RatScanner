@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
@@ -487,6 +487,22 @@ internal static class UserActivityHelper
         {
             return CallNextHookEx(hMouseHook, nCode, wParam, lParam);
         }
+
+        // Movement and wheel events do not need a payload read on this hot path.
+        if (
+            (WM)wParam
+            is not (
+                WM.LBUTTONUP
+                or WM.LBUTTONDOWN
+                or WM.RBUTTONUP
+                or WM.RBUTTONDOWN
+                or WM.MBUTTONUP
+                or WM.MBUTTONDOWN
+                or WM.XBUTTONUP
+                or WM.XBUTTONDOWN
+            )
+        )
+            return CallNextHookEx(hMouseHook, nCode, wParam, lParam);
 
         // Indicates if any of underlying events set the Handled flag
         bool handled = false;
