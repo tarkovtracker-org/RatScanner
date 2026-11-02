@@ -104,18 +104,15 @@ public sealed partial class BlazorUI : UserControl, ISwitchable, IDisposable
             services.GetRequiredService<IHotkeyRegistrar>()
         ));
 
-        System.Collections.Generic.IEnumerable<System.Drawing.Rectangle> bounds =
-            System.Windows.Forms.Screen.AllScreens.Select(screen => screen.Bounds);
-        int left = 0;
-        int top = 0;
-        foreach (System.Drawing.Rectangle bound in bounds)
-        {
-            if (bound.Left < left)
-                left = bound.Left;
-            if (bound.Top < top)
-                top = bound.Top;
-        }
-        serviceCollection.AddSingleton<VirtualScreenOffset>(s => new VirtualScreenOffset(left, top));
+        // Initial value only; the overlay refreshes the origin and its DPI scale whenever
+        // it is sized for a tooltip.
+        System.Drawing.Rectangle virtualScreen = VirtualScreenOffset.VirtualScreenBounds(
+            System.Windows.Forms.Screen.AllScreens.Select(screen => screen.Bounds)
+        );
+        serviceCollection.AddSingleton<VirtualScreenOffset>(_ => new VirtualScreenOffset(
+            virtualScreen.Left,
+            virtualScreen.Top
+        ));
 
         serviceCollection.AddSingleton<AppStateService>();
 
