@@ -14,6 +14,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'benchmark-helpers.ps1')
 
 function Get-ProcessTreeIds {
     param([int]$RootProcessId)
@@ -32,36 +33,6 @@ function Get-ProcessTreeIds {
     } while ($added)
 
     return @($ids)
-}
-
-function Get-ProcessTreeSnapshot {
-    param([int]$RootProcessId)
-
-    $ids = Get-ProcessTreeIds -RootProcessId $RootProcessId
-    $processes = foreach ($id in $ids) {
-        Get-Process -Id $id -ErrorAction SilentlyContinue
-    }
-
-    $cpuMilliseconds = 0.0
-    $privateBytes = [long]0
-    $workingSetBytes = [long]0
-    $processCount = 0
-
-    foreach ($process in $processes) {
-        if ($null -eq $process) { continue }
-        $processCount++
-        # A process in the tree can exit between enumeration and property access.
-        try { $cpuMilliseconds += [double]$process.TotalProcessorTime.TotalMilliseconds } catch { Write-Verbose "Process $($process.Id) exited before CPU time could be read." }
-        try { $privateBytes += [long]$process.PrivateMemorySize64 } catch { Write-Verbose "Process $($process.Id) exited before private memory could be read." }
-        try { $workingSetBytes += [long]$process.WorkingSet64 } catch { Write-Verbose "Process $($process.Id) exited before working set could be read." }
-    }
-
-    return [pscustomobject]@{
-        ProcessCount = $processCount
-        CpuMilliseconds = $cpuMilliseconds
-        PrivateBytes = $privateBytes
-        WorkingSetBytes = $workingSetBytes
-    }
 }
 
 function Get-Percentile {
@@ -93,43 +64,47 @@ try {
 
     $samples = [System.Collections.Generic.List[object]]::new()
     $previous = Get-ProcessTreeSnapshot -RootProcessId $root.Id
-    $previousAt = [DateTimeOffset]::UtcNow
 
     for ($i = 0; $i -lt $SampleCount; $i++) {
         Start-Sleep -Milliseconds $SampleIntervalMilliseconds
         if ($root.HasExited) {
             throw "RatScanner exited during benchmark sampling with code $($root.ExitCode)."
         }
-        $now = [DateTimeOffset]::UtcNow
         $current = Get-ProcessTreeSnapshot -RootProcessId $root.Id
-        $elapsedMilliseconds = ($now - $previousAt).TotalMilliseconds
-        $cpuMillisecondsPerSecond = if ($elapsedMilliseconds -gt 0) {
-            (($current.CpuMilliseconds - $previous.CpuMilliseconds) / $elapsedMilliseconds) * 1000
-        } else {
-            0
-        }
+        $cpu = Get-CpuSample -Previous $previous -Current $current
+        $elapsedMilliseconds = $cpu.ElapsedMilliseconds
+        $cpuMillisecondsPerSecond = $cpu.MillisecondsPerSecond
+
+        # Each raw counter carries its own provider sampling interval. CIM queries
+        # can take variable time, so the CPU snapshot interval is not a GPU clock.
+        $gpu = Get-GpuUtilization -Previous $previous.GpuRunningTime -Current $current.GpuRunningTime
+        $gpu3DPercent = $gpu.ThreeD
+        $gpuAllEnginesPercent = $gpu.AllEngines
 
         $samples.Add([pscustomobject]@{
             Index = $i + 1
             ElapsedMilliseconds = [Math]::Round($elapsedMilliseconds, 3)
             CpuMillisecondsPerSecond = [Math]::Round($cpuMillisecondsPerSecond, 3)
+            Gpu3DPercent = [Math]::Round($gpu3DPercent, 3)
+            GpuAllEnginesPercent = [Math]::Round($gpuAllEnginesPercent, 3)
             PrivateBytes = $current.PrivateBytes
             WorkingSetBytes = $current.WorkingSetBytes
             ProcessCount = $current.ProcessCount
         })
 
         $previous = $current
-        $previousAt = $now
     }
 
     $cpuValues = [double[]]($samples | ForEach-Object CpuMillisecondsPerSecond)
+    $gpu3DValues = [double[]]($samples | ForEach-Object Gpu3DPercent)
+    $gpuAllValues = [double[]]($samples | ForEach-Object GpuAllEnginesPercent)
     $privateValues = [double[]]($samples | ForEach-Object PrivateBytes)
     $workingSetValues = [double[]]($samples | ForEach-Object WorkingSetBytes)
     $timestamp = [DateTimeOffset]::UtcNow
     $outputDirectory = Join-Path $PSScriptRoot '..\..\data\bench'
     New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
     $safeLabel = $Label -replace '[^a-zA-Z0-9._-]', '-'
-    $outputPath = Join-Path $outputDirectory "$($timestamp.ToString('yyyyMMdd-HHmmss'))-$safeLabel.json"
+    $outputPath = Join-Path $outputDirectory "$($timestamp.ToString('yyyyMMdd-HHmmss'))-$safeLabel-$([Guid]::NewGuid().ToString('N')).json"
 
     $result = [ordered]@{
         TimestampUtc = $timestamp.ToString('O')
@@ -146,6 +121,14 @@ try {
                 Median = Get-Percentile -Values $cpuValues -Percentile 0.5
                 P95 = Get-Percentile -Values $cpuValues -Percentile 0.95
             }
+            Gpu3DPercent = [ordered]@{
+                Median = Get-Percentile -Values $gpu3DValues -Percentile 0.5
+                P95 = Get-Percentile -Values $gpu3DValues -Percentile 0.95
+            }
+            GpuAllEnginesPercent = [ordered]@{
+                Median = Get-Percentile -Values $gpuAllValues -Percentile 0.5
+                P95 = Get-Percentile -Values $gpuAllValues -Percentile 0.95
+            }
             PrivateBytes = [ordered]@{
                 Median = Get-Percentile -Values $privateValues -Percentile 0.5
                 P95 = Get-Percentile -Values $privateValues -Percentile 0.95
@@ -158,7 +141,7 @@ try {
         Samples = $samples
     }
 
-    $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $outputPath -Encoding utf8
+    Write-BenchmarkReport -Path $outputPath -Json ($result | ConvertTo-Json -Depth 8)
     $result | ConvertTo-Json -Depth 8
     Write-Host "Raw benchmark: $outputPath"
 }
