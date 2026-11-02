@@ -70,6 +70,8 @@ TTL policy lives in `TarkovDevAPI` using `RatConfig` TTL fields and file mtime â
 ## Display / resolution handling
 
 - Active game display configuration is refreshed on a short interval under a lock.
+- Periodic scan-path refreshes retain the last viewport while the game window is minimized; explicit settings refreshes apply the detected configuration.
+- Each scan compares the published engine scale with the effective viewport scale, so a failed rebuild is retried on later scans and DPI-only changes do not rebuild the engine.
 - Settings UI can force monitor, custom resolution, or scale overrides.
 - Capture geometry and RatEye scale depend on the resolved configuration â€” wrong monitor is a top cause of failed scans.
 
