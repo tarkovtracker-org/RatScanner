@@ -19,6 +19,7 @@ internal static class WindowsGameDisplayService
 
     internal static GameDisplayConfiguration Detect(GameDisplayPreferences preferences) => Detect(preferences, out _);
 
+    /// <param name="preferences">The configured display and viewport selection preferences.</param>
     /// <param name="gameWindowMinimized">
     /// True when a Tarkov window exists but is minimized and no restored Tarkov window
     /// was found. Its client rectangle is then meaningless, and the viewport falls back
