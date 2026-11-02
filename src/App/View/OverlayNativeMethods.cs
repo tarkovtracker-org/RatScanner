@@ -47,6 +47,9 @@ internal static class OverlayNativeMethods
     internal static extern bool SetWindowDisplayAffinity(nint hWnd, uint dwAffinity);
 
     [DllImport("user32.dll")]
+    internal static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool EnumChildWindows(nint hWndParent, EnumWindowsProc lpEnumFunc, nint lParam);
 }
