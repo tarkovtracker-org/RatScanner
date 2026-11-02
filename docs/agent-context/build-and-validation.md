@@ -76,6 +76,7 @@ The current high-signal smoke covers:
 - keyboard activation/focus through Settings and a click-driven About route, including the About card's two-step vertical rhythm (text vs block spacing) and a `desktop-about.png` capture;
 - desktop and 600px narrow settings rendering, responsive control swap, bounds, and horizontal overflow;
 - result-card item art containment (portrait, landscape, square icons) and the Details user-action contract;
+- fixed-dark Mud palette colors through emulated dark/light system-theme changes and Tracking/About/Settings navigation, with screenshots;
 - an ARIA snapshot of the important narrow settings structure;
 - uncaught page exceptions, browser console errors, failed app-resource requests, and app-resource HTTP 5xx responses.
 

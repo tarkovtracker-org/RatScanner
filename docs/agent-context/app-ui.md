@@ -20,9 +20,9 @@ Do not invent a second navigation stack in WPF for features that already live as
 ## MudBlazor usage
 
 - Registered in DI via `AddMudServices()` in `BlazorUI`.
-- `MainLayout` provides `MudThemeProvider` (dark via `IsDarkMode` + `PaletteDark`), `MudPopoverProvider`, `MudDialogProvider`, and `MudSnackbarProvider`. **All four providers are required** (popover was mandatory since MudBlazor 7).
+- `MainLayout` provides `MudThemeProvider` (fixed dark via `IsDarkMode`, `PaletteDark`, and `ObserveSystemDarkModeChange="false"`), `MudPopoverProvider`, `MudDialogProvider`, and `MudSnackbarProvider`. **All four providers are required** (popover was mandatory since MudBlazor 7). System light/dark notifications must not replace the shared app/overlay palette with MudBlazor's default light palette.
 - `AddMudServices()` also registers Mud popover/overlay services used by autocomplete, menus, and related components — do not fork a second Mud services pipeline.
-- Theme is a dark `MudTheme` in `MainLayout.razor` (primary purple aligned with CSS variables). Use `PaletteDark` / `DefaultTypography` (not legacy `Palette` / `Default`).
+- Theme is a dark `MudTheme` in `MainLayout.razor` (brass accent and light text aligned with CSS variables). Use `PaletteDark` / `DefaultTypography` (not legacy `Palette` / `Default`).
 - Prefer Mud component **parameters** (`Margin`, `Variant`, `Underline`, `FullWidth`, density) over fighting component chrome with CSS.
 - Bind checkboxes/switches with `@bind-Value` (not legacy `@bind-Checked`). Custom field converters implement `IConverter` / `Conversions.From`.
 - MudBlazor analyzers (e.g. MUD0002 illegal attributes) should be treated as defects when they fire.
