@@ -5,11 +5,10 @@
 @inject MenuVM MenuVM
 @inject ITrackerService TrackerService
 @inject RatScanner.VirtualScreenOffset VirtualScreenOffset
-@inject SettingsVM SettingsVM;
 @inject IJSRuntime JSRuntime;
 @implements IDisposable
 
-<div style="transform-origin: top left; transform: scale(@((1f / SettingsVM.ScreenScale).ToString(CultureInfo.InvariantCulture)));">
+<div style="transform-origin: top left; transform: scale(@((1d / VirtualScreenOffset.DeviceScale).ToString(CultureInfo.InvariantCulture)));">
     @{
         var currentUser = TrackerService.State.CurrentUser;
     }
@@ -128,7 +127,12 @@
     protected override void OnInitialized()
     {
         MenuVM.PropertyChanged += PropertyChangeHandler;
+        VirtualScreenOffset.Changed += VirtualScreenChanged;
     }
+
+    // The overlay window may be re-sized (new origin or DPI) after this page already
+    // rendered the tooltip; re-render so positions use the current mapping.
+    private void VirtualScreenChanged() => _ = InvokeAsync(StateHasChanged);
 
     private async void PropertyChangeHandler(object? sender, EventArgs e)
     {
@@ -173,5 +177,6 @@
     public void Dispose()
     {
         MenuVM.PropertyChanged -= PropertyChangeHandler;
+        VirtualScreenOffset.Changed -= VirtualScreenChanged;
     }
 }
