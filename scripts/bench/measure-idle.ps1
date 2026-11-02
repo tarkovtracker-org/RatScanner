@@ -34,6 +34,28 @@ function Get-ProcessTreeIds {
     return @($ids)
 }
 
+function Get-GpuRunningTime {
+    param([int[]]$ProcessIds)
+
+    # Raw GPU engine counters expose cumulative RunningTime in 100 ns units per
+    # pid/engine instance. Deltas give exact utilization and, unlike Get-Counter
+    # paths, the CIM class name is not localized.
+    $pidSet = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($id in $ProcessIds) { [void]$pidSet.Add($id) }
+    # Keyed by full instance name so deltas are taken per engine instance; summing by
+    # type first would let one instance exiting cancel out another's usage.
+    $byInstance = @{}
+    foreach ($engine in Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUEngine) {
+        if ($engine.Name -notmatch '^pid_(\d+)_.*_engtype_(.+)$') { continue }
+        if (-not $pidSet.Contains([int]$Matches[1])) { continue }
+        $byInstance[$engine.Name] = [pscustomobject]@{
+            EngineType = $Matches[2]
+            RunningTime = [long]$engine.RunningTime
+        }
+    }
+    return $byInstance
+}
+
 function Get-ProcessTreeSnapshot {
     param([int]$RootProcessId)
 
@@ -58,6 +80,7 @@ function Get-ProcessTreeSnapshot {
 
     return [pscustomobject]@{
         ProcessCount = $processCount
+        GpuRunningTime = Get-GpuRunningTime -ProcessIds $ids
         CpuMilliseconds = $cpuMilliseconds
         PrivateBytes = $privateBytes
         WorkingSetBytes = $workingSetBytes
@@ -109,10 +132,29 @@ try {
             0
         }
 
+        # GPU percent = busy time / wall time, per engine instance present in both
+        # samples (a new instance's prior cumulative time is not from this interval),
+        # then summed by engine type.
+        $gpu3DPercent = 0.0
+        $gpuAllEnginesPercent = 0.0
+        if ($elapsedMilliseconds -gt 0) {
+            foreach ($instanceName in $current.GpuRunningTime.Keys) {
+                $before = $previous.GpuRunningTime[$instanceName]
+                if ($null -eq $before) { continue }
+                $instance = $current.GpuRunningTime[$instanceName]
+                $delta = $instance.RunningTime - $before.RunningTime
+                $percent = [Math]::Max(0, $delta / 10000.0 / $elapsedMilliseconds * 100)
+                $gpuAllEnginesPercent += $percent
+                if ($instance.EngineType -eq '3D') { $gpu3DPercent += $percent }
+            }
+        }
+
         $samples.Add([pscustomobject]@{
             Index = $i + 1
             ElapsedMilliseconds = [Math]::Round($elapsedMilliseconds, 3)
             CpuMillisecondsPerSecond = [Math]::Round($cpuMillisecondsPerSecond, 3)
+            Gpu3DPercent = [Math]::Round($gpu3DPercent, 3)
+            GpuAllEnginesPercent = [Math]::Round($gpuAllEnginesPercent, 3)
             PrivateBytes = $current.PrivateBytes
             WorkingSetBytes = $current.WorkingSetBytes
             ProcessCount = $current.ProcessCount
@@ -123,6 +165,8 @@ try {
     }
 
     $cpuValues = [double[]]($samples | ForEach-Object CpuMillisecondsPerSecond)
+    $gpu3DValues = [double[]]($samples | ForEach-Object Gpu3DPercent)
+    $gpuAllValues = [double[]]($samples | ForEach-Object GpuAllEnginesPercent)
     $privateValues = [double[]]($samples | ForEach-Object PrivateBytes)
     $workingSetValues = [double[]]($samples | ForEach-Object WorkingSetBytes)
     $timestamp = [DateTimeOffset]::UtcNow
@@ -145,6 +189,14 @@ try {
             CpuMillisecondsPerSecond = [ordered]@{
                 Median = Get-Percentile -Values $cpuValues -Percentile 0.5
                 P95 = Get-Percentile -Values $cpuValues -Percentile 0.95
+            }
+            Gpu3DPercent = [ordered]@{
+                Median = Get-Percentile -Values $gpu3DValues -Percentile 0.5
+                P95 = Get-Percentile -Values $gpu3DValues -Percentile 0.95
+            }
+            GpuAllEnginesPercent = [ordered]@{
+                Median = Get-Percentile -Values $gpuAllValues -Percentile 0.5
+                P95 = Get-Percentile -Values $gpuAllValues -Percentile 0.95
             }
             PrivateBytes = [ordered]@{
                 Median = Get-Percentile -Values $privateValues -Percentile 0.5
