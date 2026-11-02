@@ -466,8 +466,8 @@ public sealed class RatScannerMain
     /// Loads icon templates for <paramref name="sizes"/> off the scan path. Each size is
     /// loaded under <see cref="IconScanLock"/> and only while <paramref name="engine"/> is
     /// still the published engine, so a rebuild can never dispose it mid-load (publishing
-    /// a replacement needs the same lock). A scan that arrives meanwhile waits at most for
-    /// one size, which it would otherwise have loaded itself.
+    /// a replacement needs the same lock). Releasing the lock between sizes lets scans
+    /// compete for it without waiting for one uninterrupted full-catalog warm-up.
     /// </summary>
     private void WarmUpIconTemplates(RatEyeEngine engine, IReadOnlyList<RatEye.Vector2> sizes)
     {
