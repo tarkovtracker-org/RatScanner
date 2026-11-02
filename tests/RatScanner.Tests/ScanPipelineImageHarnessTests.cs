@@ -53,7 +53,11 @@ public class ScanPipelineImageHarnessTests
         }
     }
 
-    private static RatEyeEngine CreateEngine(bool highlighted = true, bool useCache = false)
+    private static RatEyeEngine CreateEngine(
+        bool highlighted = true,
+        bool useCache = false,
+        RatStash.Database? database = null
+    )
     {
         string data = Path.Combine(AppContext.BaseDirectory, "Data");
         Config config = new()
@@ -77,15 +81,12 @@ public class ScanPipelineImageHarnessTests
                 InventoryConfig = new Config.Processing.Inventory { OptimizeHighlighted = highlighted },
             },
         };
-        return new RatEyeEngine(config, LoadRealItemDatabase());
+        return new RatEyeEngine(config, database ?? LoadRealItemDatabase());
     }
 
     private static RatStash.Database LoadRealItemDatabase()
     {
-        Assert.SkipUnless(
-            TarkovDevAPI.TryInitializeCacheFromOffline(),
-            "Offline tarkov.dev cache not found; run the app once to populate it."
-        );
+        TarkovDevAPI.TryInitializeCacheFromOffline();
         Assert.SkipUnless(TarkovDevAPI.TryGetCachedItems(out TarkovItem[] items), "Cached items are unavailable.");
         Assert.SkipUnless(items.Length > 0, "The offline tarkov.dev item cache is empty.");
         return RatStash.Database.FromItems(items.Select(RatScannerMain.ToRatStashItem).ToList());
@@ -228,8 +229,9 @@ public class ScanPipelineImageHarnessTests
             return stopwatch.Elapsed.TotalMilliseconds;
         }
 
+        RatStash.Database database = LoadRealItemDatabase();
         Stopwatch build = Stopwatch.StartNew();
-        RatEyeEngine first = CreateEngine(highlighted: true, useCache: true);
+        RatEyeEngine first = CreateEngine(highlighted: true, useCache: true, database);
         build.Stop();
         double cold;
         double[] warm = new double[warmIterations];
@@ -245,7 +247,7 @@ public class ScanPipelineImageHarnessTests
         }
 
         Stopwatch rebuild = Stopwatch.StartNew();
-        using RatEyeEngine second = CreateEngine(highlighted: true, useCache: true);
+        using RatEyeEngine second = CreateEngine(highlighted: true, useCache: true, database);
         rebuild.Stop();
         double afterRebuild = ScanOnce(second);
 
@@ -262,7 +264,7 @@ public class ScanPipelineImageHarnessTests
         if (!string.IsNullOrWhiteSpace(outputDirectory))
         {
             BenchmarkReport.Write(
-                outputDirectory,
+                Path.GetFullPath(outputDirectory, RepoRoot),
                 timestamp => new
                 {
                     TimestampUtc = timestamp,
