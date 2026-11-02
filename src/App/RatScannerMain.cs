@@ -71,6 +71,7 @@ public sealed class RatScannerMain
     private readonly object _trackerConfigurationLock = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly ScanDiagnosticStore _scanDiagnostics = new();
+    private readonly ScanWarmupGate _scanWarmupGate = new();
     private int _trackerRefreshInProgress;
     private bool _ratEyeReady;
     private bool _runtimeInitialized;
@@ -379,6 +380,7 @@ public sealed class RatScannerMain
         double startedAtMs = PerfTrace.MonotonicMs();
         bool hasItems = false;
         long? itemSignature = null;
+        RatEyeEngine? published = null;
         bool wasPublished = _engineLifecycle.BuildAndPublish(
             () =>
             {
@@ -400,6 +402,7 @@ public sealed class RatScannerMain
                         RatEyeEngine = replacement;
                         _ratEyeReady = hasItems;
                         _publishedItemSignature = itemSignature;
+                        published = replacement;
                     }
                 }
 
@@ -421,6 +424,83 @@ public sealed class RatScannerMain
         PerfTraceStore.RecordScanStage(PerfTraceStore.CurrentScanSequence, "engine.rebuild", elapsedMs);
         UpdateHotkeyReadiness();
         Logger.LogDebug($"SetupRatEye: completed in {elapsedMs:F1} ms");
+
+        if (hasItems && published is not null && TarkovDevAPI.TryGetCachedItems(out TarkovItem[] items))
+        {
+            IReadOnlyList<RatEye.Vector2> sizes = IconWarmUpSlotSizes(items);
+            _ = Task.Run(() => WarmUpIconTemplates(published, sizes));
+        }
+    }
+
+    /// <summary>
+    /// Most common item slot sizes, most frequent first, until they cover
+    /// <paramref name="coverage"/> of all items. Warming every size would load every
+    /// template up front; these few cover most scans (~80% of items are 1x1, 2x1,
+    /// 2x2 or 1x2) while rarer sizes still load lazily on their first scan.
+    /// </summary>
+    internal static IReadOnlyList<RatEye.Vector2> IconWarmUpSlotSizes(
+        IReadOnlyCollection<TarkovItem> items,
+        double coverage = 0.8
+    )
+    {
+        List<RatEye.Vector2> sizes = [];
+        if (items.Count == 0)
+            return sizes;
+
+        int covered = 0;
+        foreach (
+            var group in items
+                .GroupBy(item => (Width: Math.Max(1, item.Width), Height: Math.Max(1, item.Height)))
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Key.Width * group.Key.Height)
+        )
+        {
+            if ((double)covered / items.Count >= coverage)
+                break;
+            sizes.Add(new RatEye.Vector2(group.Key.Width, group.Key.Height));
+            covered += group.Count();
+        }
+        return sizes;
+    }
+
+    /// <summary>
+    /// Loads icon templates for <paramref name="sizes"/> off the scan path. Each size is
+    /// loaded under <see cref="IconScanLock"/> and only while <paramref name="engine"/> is
+    /// still the published engine, so a rebuild can never dispose it mid-load (publishing
+    /// a replacement needs the same lock). Pending foreground scans stop admission of
+    /// remaining sizes; an in-progress engine load must still finish before scanning.
+    /// </summary>
+    private void WarmUpIconTemplates(RatEyeEngine engine, IReadOnlyList<RatEye.Vector2> sizes)
+    {
+        double startedAtMs = PerfTrace.MonotonicMs();
+        try
+        {
+            foreach (RatEye.Vector2 size in sizes)
+            {
+                if (
+                    !_scanWarmupGate.TryRunBackgroundStep(
+                        IconScanLock,
+                        () =>
+                        {
+                            if (_disposed || !ReferenceEquals(RatEyeEngine, engine))
+                                return false;
+                            engine.WarmUpIconTemplates(size);
+                            return true;
+                        }
+                    )
+                )
+                    return;
+            }
+
+            double elapsedMs = PerfTrace.MonotonicMs() - startedAtMs;
+            PerfTraceStore.SetGauge("engine.icon_warmup_ms", (long)elapsedMs);
+            Logger.LogDebug($"Icon template warm-up for {sizes.Count} slot size(s) took {elapsedMs:F1} ms");
+        }
+        catch (Exception exception)
+        {
+            // Warm-up is an optimization; scans still load templates lazily.
+            Logger.LogWarning("Icon template warm-up failed; templates will load on first scan.", exception);
+        }
     }
 
     Task IScanOrchestrator.RebuildEngineAsync(CancellationToken cancellationToken)
@@ -640,6 +720,7 @@ public sealed class RatScannerMain
             return;
         }
 
+        using IDisposable foregroundScan = _scanWarmupGate.EnterForeground();
         PerfTrace trace = PerfTraceStore.BeginScan("name-scan");
         if (hookObservedAtMs > 0)
             trace.RecordAt("hook.dispatch", 0, PerfTrace.MonotonicMs() - hookObservedAtMs);
@@ -757,6 +838,7 @@ public sealed class RatScannerMain
     {
         if (ShouldSkipNameScanForHiddenCursor())
             return;
+        using IDisposable foregroundScan = _scanWarmupGate.EnterForeground();
         RefreshGameDisplayForScan();
         lock (NameScanLock)
         {
@@ -854,6 +936,7 @@ public sealed class RatScannerMain
             return;
         }
 
+        using IDisposable foregroundScan = _scanWarmupGate.EnterForeground();
         PerfTrace trace = PerfTraceStore.BeginScan("icon-scan");
         if (hookObservedAtMs > 0)
             trace.RecordAt("hook.dispatch", 0, PerfTrace.MonotonicMs() - hookObservedAtMs);
