@@ -114,3 +114,43 @@ dotnet test RatScanner.sln
 `PerfTraceTests` and `PerfTraceStoreTests` cover ordering, clamping, correlation,
 retention, and report rendering. Timings themselves need a manual run: start via
 `dev.bat`, scan an item, then read `Log.txt`.
+
+## Benchmarks
+
+Performance changes report before/after numbers from these local benchmarks. Raw
+JSON goes to the gitignored `data/bench/`. Reports use one UTC timestamp and a
+GUID filename and refuse to overwrite an existing file. Percentiles use nearest
+rank (p50 selects the lower middle sample for an even count). Idle GPU utilization
+uses each raw engine counter's `Timestamp_Sys100NS` interval and
+`Frequency_Sys100NS`, converting its 100 ns busy time to the same seconds.
+The GPU provider can leave its `PerfTime` clock fields at zero. It does
+not use the process snapshot's wall-clock interval. CPU intervals use monotonic
+Stopwatch timestamps captured immediately after CPU/memory reads, before GPU CIM
+queries, so variable query durations do not distort CPU utilization.
+
+`BenchmarkReportTests` and `scripts/bench/test-benchmark-helpers.ps1` exercise the
+report and GPU calculations with synthetic inputs, without local scan fixtures.
+
+| Benchmark | Command | Measures |
+| --- | --- | --- |
+| Idle cost | `scripts\bench\measure-idle.ps1 -Label <name>` | CPU ms/s, GPU 3D and all-engine percent (raw GPU engine counters), memory, for the app plus its WebView2 child processes |
+| Cropped icon identification | `dotnet test tests\RatScanner.Tests -c Release --filter IconScan_latency_profile` (set `RATSCANNER_BENCH_OUT=data\bench` for JSON) | Engine build, cold cropped icon identification, warm p50/max, rebuild, first cropped identification after a rebuild |
+| Accuracy | `RatEye.Benchmarks` replay of `*.ratdiag.json` manifests | Expected item ids per capture plus stage timings |
+
+The latency harness needs the untracked repo-root screenshots and an offline
+tarkov.dev cache (run the app once); it skips otherwise. Game screenshots stay
+local fixtures, not CI inputs.
+
+Icon timings cover `NewIcon` on a 104×104 crop. They exclude screen capture,
+inventory detection with `NewInventory(...).LocateIcon()`, and UI presentation.
+
+Baseline for cropped icon identification (Release, 2560x1440 fixtures, one dev machine, before the scan-path fixes):
+
+| Metric | Value |
+| --- | --- |
+| Engine build | ~320-360 ms |
+| First cropped icon identification (cold disk / warm disk) | ~2080 ms / ~620 ms |
+| Warm cropped icon identification p50 / max | ~185 ms / ~210 ms |
+| Engine rebuild | ~70 ms |
+| First cropped icon identification after a rebuild | ~490 ms |
+| Idle GPU 3D / CPU median | 0% / 0 ms/s (p95 CPU ~28 ms/s) |
