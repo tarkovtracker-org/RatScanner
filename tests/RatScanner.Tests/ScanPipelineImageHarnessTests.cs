@@ -200,7 +200,8 @@ public class ScanPipelineImageHarnessTests
     }
 
     /// <summary>
-    /// Latency profile for the icon-scan path the app actually runs: an engine with the
+    /// Cropped icon-identification profile, excluding capture, inventory detection,
+    /// and UI presentation: an engine with the
     /// icon cache enabled (RatConfig.IconScan.UseCachedIcons), a cold first scan, warm
     /// repeats, and the first scan after a rebuild (what a catalog refresh or display
     /// change triggers). Timings are reported, not asserted, because they depend on the
