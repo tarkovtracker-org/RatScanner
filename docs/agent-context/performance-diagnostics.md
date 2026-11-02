@@ -119,7 +119,18 @@ retention, and report rendering. Timings themselves need a manual run: start via
 ## Benchmarks
 
 Performance changes report before/after numbers from these local benchmarks. Raw
-JSON goes to the gitignored `data/bench/`.
+JSON goes to the gitignored `data/bench/`. Reports use one UTC timestamp and a
+GUID filename and refuse to overwrite an existing file. Percentiles use nearest
+rank (p50 selects the lower middle sample for an even count). Idle GPU utilization
+uses each raw engine counter's `Timestamp_Sys100NS` interval and
+`Frequency_Sys100NS`, converting its 100 ns busy time to the same seconds.
+The GPU provider can leave its `PerfTime` clock fields at zero. It does
+not use the process snapshot's wall-clock interval. CPU intervals use monotonic
+Stopwatch timestamps captured immediately after CPU/memory reads, before GPU CIM
+queries, so variable query durations do not distort CPU utilization.
+
+`BenchmarkReportTests` and `scripts/bench/test-benchmark-helpers.ps1` exercise the
+report and GPU calculations with synthetic inputs, without local scan fixtures.
 
 | Benchmark | Command | Measures |
 | --- | --- | --- |

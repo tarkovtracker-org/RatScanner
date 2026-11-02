@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using Newtonsoft.Json;
 using RatEye;
 using Xunit;
 using TarkovItem = RatScanner.TarkovDev.Item;
@@ -264,7 +263,7 @@ public class ScanPipelineImageHarnessTests
         double afterWarmUp = ScanOnce(warmed);
 
         Array.Sort(warm);
-        double warmP50 = warm[warm.Length / 2];
+        double warmP50 = BenchmarkReport.Percentile(warm, 0.5);
         double warmMax = warm[^1];
         _output.WriteLine($"engine.build_ms={build.Elapsed.TotalMilliseconds:F1}");
         _output.WriteLine($"icon.cold_ms={cold:F1}");
@@ -277,11 +276,11 @@ public class ScanPipelineImageHarnessTests
         string? outputDirectory = Environment.GetEnvironmentVariable("RATSCANNER_BENCH_OUT");
         if (!string.IsNullOrWhiteSpace(outputDirectory))
         {
-            Directory.CreateDirectory(outputDirectory);
-            string report = JsonConvert.SerializeObject(
-                new
+            BenchmarkReport.Write(
+                outputDirectory,
+                timestamp => new
                 {
-                    TimestampUtc = DateTimeOffset.UtcNow,
+                    TimestampUtc = timestamp,
                     Machine = Environment.MachineName,
                     Fixture = "image copy 3.png WD-40 1x1",
                     EngineBuildMs = build.Elapsed.TotalMilliseconds,
@@ -292,12 +291,7 @@ public class ScanPipelineImageHarnessTests
                     IconFirstAfterRebuildMs = afterRebuild,
                     IconWarmUpMs = warmUp.Elapsed.TotalMilliseconds,
                     IconFirstAfterWarmUpMs = afterWarmUp,
-                },
-                Formatting.Indented
-            );
-            File.WriteAllText(
-                Path.Combine(outputDirectory, $"{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}-icon-latency.json"),
-                report
+                }
             );
         }
     }
