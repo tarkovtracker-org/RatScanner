@@ -20,6 +20,82 @@ namespace RatScanner.UiTests;
 public sealed class WebViewSmokeTests
 {
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromMinutes(3);
+    private static readonly string[] DarkPaletteColors =
+    [
+        "rgb(166, 154, 119)",
+        "rgb(238, 241, 239)",
+        "rgb(25, 30, 31)",
+    ];
+
+    [Fact]
+    [Trait("Category", "UI")]
+    public async Task Fixed_dark_palette_survives_system_theme_changes_and_navigation()
+    {
+        string runDirectory = UiSession.CreateRunDirectory();
+        using CatalogCacheSeed catalogSeed = new(runDirectory);
+        await using UiSession session = await UiSession.StartAsync(TestContext.Current.CancellationToken, runDirectory);
+        try
+        {
+            IPage page = session.Page;
+            await page.Locator(".scan-page")
+                .WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 120_000 });
+            await session.ResizeAsync(width: 1100, height: 850);
+            await page.EmulateMediaAsync(new() { ColorScheme = ColorScheme.Dark });
+            await page.WaitForFunctionAsync("() => matchMedia('(prefers-color-scheme: dark)').matches");
+            await page.Locator("a[href='/app/settings/general']").ClickAsync();
+            await page.WaitForURLAsync("**/app/settings/general");
+            await AssertDarkPaletteAsync(page);
+
+            // Exercise both directions, including a light notification after returning to dark.
+            foreach (ColorScheme scheme in new[] { ColorScheme.Light, ColorScheme.Dark, ColorScheme.Light })
+            {
+                await page.EmulateMediaAsync(new() { ColorScheme = scheme });
+                await page.WaitForFunctionAsync(
+                    "dark => matchMedia('(prefers-color-scheme: dark)').matches === dark",
+                    scheme == ColorScheme.Dark
+                );
+                foreach (string route in new[] { "/app/settings/tracking", "/app/credits", "/app/settings/general" })
+                {
+                    // Real Blazor navigation also exercises provider rerenders after the media event.
+                    await page.Locator($"a[href='{route}']").ClickAsync();
+                    await page.WaitForURLAsync($"**{route}");
+                    await AssertVisibleAsync(page.Locator(route == "/app/credits" ? ".about-page" : ".settings-page"));
+                    await AssertDarkPaletteAsync(page);
+                    await session.ScreenshotAsync($"theme-{scheme}-{route.Split('/')[^1]}.png");
+                }
+            }
+
+            Assert.Empty(session.RuntimeFailures);
+        }
+        catch (Exception exception)
+        {
+            await session.MarkFailedAsync(exception);
+            throw;
+        }
+    }
+
+    private static async Task AssertDarkPaletteAsync(IPage page)
+    {
+        // Resolve the actual generated Mud palette through Chromium, so equivalent CSS
+        // color syntaxes compare equally and a default light palette cannot pass.
+        string[] colors = await page.EvaluateAsync<string[]>(
+            """
+            () => {
+                const probe = document.createElement('span');
+                document.body.append(probe);
+                try {
+                    return ['primary', 'text-primary', 'surface'].map(name => {
+                        probe.style.color = `var(--mud-palette-${name})`;
+                        return getComputedStyle(probe).color;
+                    });
+                } finally {
+                    probe.remove();
+                }
+            }
+            """
+        );
+        Assert.Equal(DarkPaletteColors, colors);
+    }
 
     [Fact]
     [Trait("Category", "UI")]

@@ -4,7 +4,7 @@
 @inject LocalizationService Localizer
 @inject ISnackbar Snackbar
 @implements IDisposable
-<MudThemeProvider Theme="_theme" IsDarkMode="true" />
+<MudThemeProvider Theme="_theme" IsDarkMode="true" ObserveSystemDarkModeChange="false" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
