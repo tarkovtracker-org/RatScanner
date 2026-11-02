@@ -153,6 +153,13 @@ Baseline (Release, 2560x1440 fixtures, one dev machine, before the scan-path fix
 | First icon scan after a rebuild | ~490 ms |
 | Idle GPU 3D / CPU median | 0% / 0 ms/s (p95 CPU ~28 ms/s) |
 
+Background icon-template warm-up admits one slot size at a time under the engine
+lifetime lock. Name, screen-name, and icon scans register foreground intent before
+display refresh and lock acquisition; pending or active scans stop remaining
+warm-up steps. Hidden-cursor skips and throttled input do not register intent.
+An engine template load already in progress cannot be preempted, so a foreground
+scan can still wait for that current load. Remaining templates load lazily on demand.
+
 After icon-template warm-up (same machine and fixtures):
 
 | Metric | Value |

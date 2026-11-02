@@ -71,6 +71,7 @@ public sealed class RatScannerMain
     private readonly object _trackerConfigurationLock = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly ScanDiagnosticStore _scanDiagnostics = new();
+    private readonly ScanWarmupGate _scanWarmupGate = new();
     private int _trackerRefreshInProgress;
     private bool _ratEyeReady;
     private bool _runtimeInitialized;
@@ -466,8 +467,8 @@ public sealed class RatScannerMain
     /// Loads icon templates for <paramref name="sizes"/> off the scan path. Each size is
     /// loaded under <see cref="IconScanLock"/> and only while <paramref name="engine"/> is
     /// still the published engine, so a rebuild can never dispose it mid-load (publishing
-    /// a replacement needs the same lock). Releasing the lock between sizes lets scans
-    /// compete for it without waiting for one uninterrupted full-catalog warm-up.
+    /// a replacement needs the same lock). Pending foreground scans stop admission of
+    /// remaining sizes; an in-progress engine load must still finish before scanning.
     /// </summary>
     private void WarmUpIconTemplates(RatEyeEngine engine, IReadOnlyList<RatEye.Vector2> sizes)
     {
@@ -476,12 +477,19 @@ public sealed class RatScannerMain
         {
             foreach (RatEye.Vector2 size in sizes)
             {
-                lock (IconScanLock)
-                {
-                    if (_disposed || !ReferenceEquals(RatEyeEngine, engine))
-                        return;
-                    engine.WarmUpIconTemplates(size);
-                }
+                if (
+                    !_scanWarmupGate.TryRunBackgroundStep(
+                        IconScanLock,
+                        () =>
+                        {
+                            if (_disposed || !ReferenceEquals(RatEyeEngine, engine))
+                                return false;
+                            engine.WarmUpIconTemplates(size);
+                            return true;
+                        }
+                    )
+                )
+                    return;
             }
 
             double elapsedMs = PerfTrace.MonotonicMs() - startedAtMs;
@@ -712,6 +720,7 @@ public sealed class RatScannerMain
             return;
         }
 
+        using IDisposable foregroundScan = _scanWarmupGate.EnterForeground();
         PerfTrace trace = PerfTraceStore.BeginScan("name-scan");
         if (hookObservedAtMs > 0)
             trace.RecordAt("hook.dispatch", 0, PerfTrace.MonotonicMs() - hookObservedAtMs);
@@ -829,6 +838,7 @@ public sealed class RatScannerMain
     {
         if (ShouldSkipNameScanForHiddenCursor())
             return;
+        using IDisposable foregroundScan = _scanWarmupGate.EnterForeground();
         RefreshGameDisplayForScan();
         lock (NameScanLock)
         {
@@ -926,6 +936,7 @@ public sealed class RatScannerMain
             return;
         }
 
+        using IDisposable foregroundScan = _scanWarmupGate.EnterForeground();
         PerfTrace trace = PerfTraceStore.BeginScan("icon-scan");
         if (hookObservedAtMs > 0)
             trace.RecordAt("hook.dispatch", 0, PerfTrace.MonotonicMs() - hookObservedAtMs);
