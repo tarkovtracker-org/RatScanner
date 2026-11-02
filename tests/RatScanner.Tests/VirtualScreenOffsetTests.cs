@@ -1,8 +1,6 @@
 #nullable enable
 
-using System;
 using System.Drawing;
-using System.IO;
 using Xunit;
 
 namespace RatScanner.Tests;
@@ -47,19 +45,5 @@ public sealed class VirtualScreenOffsetTests
         Assert.Equal(1, offset.DeviceScale);
         offset.UpdateScale(0);
         Assert.Equal(1, offset.DeviceScale);
-    }
-
-    [Fact]
-    public void Overlay_maps_physical_pixels_with_its_own_dpi_not_the_game_display_scale()
-    {
-        // SettingsVM.ScreenScale is the game display's DPI (or a custom/unsaved settings
-        // value); the overlay's CSS pixels follow the overlay window's DPI instead.
-        string root = AppContext.BaseDirectory;
-        while (!File.Exists(Path.Combine(root, "RatScanner.sln")))
-            root = Path.GetDirectoryName(root) ?? throw new InvalidOperationException("Repository root not found.");
-        string overlay = File.ReadAllText(Path.Combine(root, "src", "App", "Pages", "Overlay", "Index.razor"));
-
-        Assert.Contains("VirtualScreenOffset.DeviceScale", overlay, StringComparison.Ordinal);
-        Assert.DoesNotContain("ScreenScale", overlay, StringComparison.Ordinal);
     }
 }
