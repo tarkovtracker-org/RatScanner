@@ -94,6 +94,7 @@ ones:
 | `window.fit_animation_started` | Content-fit animations begun |
 | `engine.rebuild_on_scan_path` | Engine rebuilds that happened inside a scan |
 | `engine.rebuild_skipped_unchanged_items` | Catalog refreshes that kept the engine because scan-relevant item fields were unchanged (price-only refresh) |
+| `engine.icon_warmup_ms` | Last background icon-template warm-up duration after an engine publish |
 | `scan.throttled` | Scans dropped by the cooldown (name and icon scans have separate cooldowns) |
 | `scan.name_skipped_cursor_hidden` | Name-scan clicks skipped because the system cursor was hidden (in raid); `NameScan.SkipWhenCursorHidden` in `config.cfg` turns this off |
 
@@ -114,3 +115,37 @@ dotnet test RatScanner.sln
 `PerfTraceTests` and `PerfTraceStoreTests` cover ordering, clamping, correlation,
 retention, and report rendering. Timings themselves need a manual run: start via
 `dev.bat`, scan an item, then read `Log.txt`.
+
+## Benchmarks
+
+Performance changes report before/after numbers from these local benchmarks. Raw
+JSON goes to the gitignored `data/bench/`.
+
+| Benchmark | Command | Measures |
+| --- | --- | --- |
+| Idle cost | `scripts\bench\measure-idle.ps1 -Label <name>` | CPU ms/s, GPU 3D and all-engine percent (raw GPU engine counters), memory, for the app plus its WebView2 child processes |
+| Icon latency | `dotnet test tests\RatScanner.Tests -c Release --filter IconScan_latency_profile` (set `RATSCANNER_BENCH_OUT=data\bench` for JSON) | Engine build, cold first icon scan, warm p50/max, rebuild, first scan after a rebuild, background warm-up, first scan after warm-up |
+| Accuracy | `RatEye.Benchmarks` replay of `*.ratdiag.json` manifests | Expected item ids per capture plus stage timings |
+
+The latency harness needs the untracked repo-root screenshots and an offline
+tarkov.dev cache (run the app once); it skips otherwise. Game screenshots stay
+local fixtures, not CI inputs.
+
+Baseline (Release, 2560x1440 fixtures, one dev machine, before the scan-path fixes):
+
+| Metric | Value |
+| --- | --- |
+| Engine build | ~320-360 ms |
+| First icon scan (cold disk / warm disk) | ~2080 ms / ~620 ms |
+| Warm icon scan p50 / max | ~185 ms / ~210 ms |
+| Engine rebuild | ~70 ms |
+| First icon scan after a rebuild | ~490 ms |
+| Idle GPU 3D / CPU median | 0% / 0 ms/s (p95 CPU ~28 ms/s) |
+
+After icon-template warm-up (same machine and fixtures):
+
+| Metric | Value |
+| --- | --- |
+| Background warm-up of the four most common slot sizes | ~620 ms (~2.1 s on a cold disk cache) |
+| First icon scan after an engine build + warm-up | ~195-230 ms (was ~490-550 ms) |
+| Idle private bytes | ~715 MB (was ~692 MB) |
