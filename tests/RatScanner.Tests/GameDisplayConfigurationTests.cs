@@ -11,6 +11,42 @@ namespace RatScanner.Tests;
 
 public sealed class GameDisplayConfigurationTests
 {
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    public void Scan_path_refresh_keeps_previous_viewport_while_the_game_is_minimized(
+        bool force,
+        bool gameWindowMinimized,
+        bool expected
+    )
+    {
+        Assert.Equal(expected, GameDisplayRefreshPolicy.ShouldApply(force, gameWindowMinimized));
+    }
+
+    [Fact]
+    public void Engine_built_for_an_old_viewport_stays_stale_until_rebuilt()
+    {
+        // The engine was built at 1920x1080 (scale 1); the committed viewport is now
+        // 2560x1440. Staleness comes from the engine itself, so it is still reported on
+        // every later scan if the first rebuild attempt failed.
+        float engineScale = RatEye.Config.Processing.Resolution2Scale(1920, 1080);
+
+        Assert.True(GameDisplayRefreshPolicy.EngineScaleIsStale(engineScale, new Size(2560, 1440)));
+        Assert.True(GameDisplayRefreshPolicy.EngineScaleIsStale(engineScale, new Size(2560, 1440)));
+    }
+
+    [Fact]
+    public void Engine_scale_matching_the_viewport_does_not_rebuild()
+    {
+        float engineScale = RatEye.Config.Processing.Resolution2Scale(2560, 1440);
+
+        Assert.False(GameDisplayRefreshPolicy.EngineScaleIsStale(engineScale, new Size(2560, 1440)));
+        // Windowed client area with a different aspect ratio changes the effective scale.
+        Assert.True(GameDisplayRefreshPolicy.EngineScaleIsStale(engineScale, new Size(2560, 1377)));
+    }
+
     [Fact]
     public void Single_display_automatic_detection_uses_safe_non_blocking_fallback()
     {
