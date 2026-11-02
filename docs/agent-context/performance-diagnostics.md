@@ -94,6 +94,7 @@ ones:
 | `window.fit_animation_started` | Content-fit animations begun |
 | `engine.rebuild_on_scan_path` | Engine rebuilds that happened inside a scan |
 | `engine.rebuild_skipped_unchanged_items` | Catalog refreshes that kept the engine because scan-relevant item fields were unchanged (price-only refresh) |
+| `engine.icon_warmup_ms` | Last background icon-template warm-up duration after an engine publish |
 | `scan.throttled` | Scans dropped by the cooldown (name and icon scans have separate cooldowns) |
 | `scan.name_skipped_cursor_hidden` | Name-scan clicks skipped because the system cursor was hidden (in raid); `NameScan.SkipWhenCursorHidden` in `config.cfg` turns this off |
 
@@ -134,7 +135,7 @@ report and GPU calculations with synthetic inputs, without local scan fixtures.
 | Benchmark | Command | Measures |
 | --- | --- | --- |
 | Idle cost | `scripts\bench\measure-idle.ps1 -Label <name>` | CPU ms/s, GPU 3D and all-engine percent (raw GPU engine counters), memory, for the app plus its WebView2 child processes |
-| Cropped icon identification | `dotnet test tests\RatScanner.Tests -c Release --filter IconScan_latency_profile` (set `RATSCANNER_BENCH_OUT=data\bench` for JSON) | Engine build, cold cropped icon identification, warm p50/max, rebuild, first cropped identification after a rebuild |
+| Cropped icon identification | `dotnet test tests\RatScanner.Tests -c Release --filter IconScan_latency_profile` (set `RATSCANNER_BENCH_OUT=data\bench` for JSON) | Engine build, cold cropped icon identification, warm p50/max, rebuild, first cropped identification after a rebuild, background warm-up, first cropped identification after warm-up |
 | Accuracy | `RatEye.Benchmarks` replay of `*.ratdiag.json` manifests | Expected item ids per capture plus stage timings |
 
 The latency harness needs the untracked repo-root screenshots and an offline
@@ -154,3 +155,18 @@ Baseline for cropped icon identification (Release, 2560x1440 fixtures, one dev m
 | Engine rebuild | ~70 ms |
 | First cropped icon identification after a rebuild | ~490 ms |
 | Idle GPU 3D / CPU median | 0% / 0 ms/s (p95 CPU ~28 ms/s) |
+
+Background icon-template warm-up admits one slot size at a time under the engine
+lifetime lock. Name, screen-name, and icon scans register foreground intent before
+display refresh and lock acquisition; pending or active scans stop remaining
+warm-up steps. Hidden-cursor skips and throttled input do not register intent.
+An engine template load already in progress cannot be preempted, so a foreground
+scan can still wait for that current load. Remaining templates load lazily on demand.
+
+After icon-template warm-up (same machine and fixtures):
+
+| Metric | Value |
+| --- | --- |
+| Background warm-up of the four most common slot sizes | ~620 ms (~2.1 s on a cold disk cache) |
+| First icon scan after an engine build + warm-up | ~195-230 ms (was ~490-550 ms) |
+| Idle private bytes | ~715 MB (was ~692 MB) |
